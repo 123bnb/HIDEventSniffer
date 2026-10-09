@@ -44,9 +44,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          DEB=$(ls packages/*roothide*.deb | head -1)
+          RAW=$(ls packages/*.deb | head -1)
+          DEB=HIDEventSniffer-1.0.0-roothide.deb
+          cp "$RAW" "$DEB"
           TAG=v1.0.0
-          NOTES=$'HID 事件抓取诊断（roothide 直装，仅注入 SpringBoard）\n\n安装后重启桌面（注销），把翻页器每个按钮按 2~3 下，日志在：\n/var/mobile/Documents/HIDEventSniffer.log\n\n只记录事件、不改变任何操作，可随时卸载。'
+          NOTES=$'HID 事件抓取诊断（roothide 直装，仅注入 SpringBoard）\n\n安装后注销桌面，把翻页器每个按钮（音量+/-、四方向、点击）各按 2~3 下，日志在：\n/var/mobile/Documents/HIDEventSniffer.log\n\n只记录事件、不改变任何操作，可随时卸载。'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$DEB" --clobber
           else
