@@ -1,6 +1,6 @@
 Package: com.yourname.hideventsniffer
 Name: HIDEventSniffer
-Version: 1.0.0
+Version: 1.0.1
 Architecture: iphoneos-arm64e
 Description: 蓝牙翻页器 HID 事件抓取诊断（仅记录不改变事件）；日志在 /var/mobile/Documents/HIDEventSniffer.log
 Maintainer: 123bnb

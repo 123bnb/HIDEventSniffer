@@ -45,10 +45,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RAW=$(ls packages/*.deb | head -1)
-          DEB=HIDEventSniffer-1.0.0-roothide.deb
+          DEB=HIDEventSniffer-1.0.1-roothide.deb
           cp "$RAW" "$DEB"
-          TAG=v1.0.0
-          NOTES=$'HID 事件抓取诊断（roothide 直装，仅注入 SpringBoard）\n\n安装后注销桌面，把翻页器每个按钮（音量+/-、四方向、点击）各按 2~3 下，日志在：\n/var/mobile/Documents/HIDEventSniffer.log\n\n只记录事件、不改变任何操作，可随时卸载。'
+          TAG=v1.0.1
+          NOTES=$'HID 事件抓取诊断 v1.0.1（roothide 直装，仅注入 SpringBoard）\n\n【本次修复】删除了 hook 系统 HID 注册函数的危险代码（v1.0.0 导致 SpringBoard 崩溃进安全模式），\n仅保留自建 HID 客户端被动监听，不再碰系统任何回调，安全模式风险归零。\n\n安装后注销桌面，把翻页器每个按钮（音量+/-、四方向、点击）各按 2~3 下，日志在：\n/var/mobile/Documents/HIDEventSniffer.log\n\n只记录事件、不改变任何操作，可随时卸载。'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$DEB" --clobber
           else

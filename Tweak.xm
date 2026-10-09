@@ -1,22 +1,20 @@
-// HIDEventSniffer —— 蓝牙翻页器 HID 事件抓取诊断（注入 SpringBoard）
-// 只观察、只记录，绝不修改/吞掉任何事件，不影响系统（安全模式风险为零）。
-// 日志：/var/mobile/Documents/HIDEventSniffer.log （同时 NSLog 到系统日志）
+// HIDEventSniffer v1.0.1 —— 蓝牙翻页器 HID 事件抓取诊断（注入 SpringBoard）
+// 只观察、只记录，绝不修改/吞掉任何事件。
 //
-// 抓两类来源：
-//   A. 自己创建一个 IOHIDEventSystemClient 被动监听全部事件（主力，不干扰系统原有客户端）
-//   B. MSHookFunction hook 系统的 RegisterEventCallback / RegisterEventBlock（对照）
+// 【v1.0.1 重大变更】删除全部 MSHookFunction（hook 系统 RegisterEventCallback/Block），
+// 那是在 SpringBoard 崩溃进安全模式的元凶。现在只保留「自建 HID 客户端」被动监听，
+// 完全不碰系统原有客户端/回调，最大程度降低风险。
+// 日志：/var/mobile/Documents/HIDEventSniffer.log （同时 NSLog 到系统日志）
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <dispatch/dispatch.h>
 #import <dlfcn.h>
-#import <substrate.h>
 
 // ===== IOKit 私有 HID 接口类型（自行声明，不依赖私有头）=====
 typedef struct __IOHIDEvent *SnifIOHIDEventRef;
 typedef struct __IOHIDEventSystemClient *SnifIOHIDEventSystemClientRef;
 typedef void (*SnifHIDCallback)(void *target, void *refcon, SnifIOHIDEventRef event, void *sender);
-typedef void (^SnifHIDBlock)(void *target, SnifIOHIDEventRef event, void *sender);
 
 // IOHIDEventType（IOKit/hid/IOHIDEventTypes.h）
 enum { SnifEvtKeyboard = 3, SnifEvtMouse = 5, SnifEvtScroll = 9, SnifEvtDigitizer = 11 };
@@ -25,11 +23,9 @@ static inline uint32_t SnifField(uint32_t type, uint32_t index) { return (type <
 // ===== 运行时解析的 C 函数指针（dlsym，跨版本稳定）=====
 static uint32_t (*pGetType)(SnifIOHIDEventRef);
 static CFIndex  (*pGetInt)(SnifIOHIDEventRef, uint32_t);
-static CFArrayRef (*pGetChildren)(SnifIOHIDEventRef);
 static SnifIOHIDEventSystemClientRef (*pCreate)(CFAllocatorRef);
 static void (*pSchedule)(SnifIOHIDEventSystemClientRef, dispatch_queue_t);
 static void (*pRegCb)(SnifIOHIDEventSystemClientRef, SnifHIDCallback, void *, CFDictionaryRef);
-static void (*pRegBlock)(SnifIOHIDEventSystemClientRef, SnifHIDBlock, void *, CFDictionaryRef);
 
 // ===== 日志 =====
 static NSString *const kLogPath = @"/var/mobile/Documents/HIDEventSniffer.log";
@@ -58,18 +54,16 @@ static NSString *SnifTypeName(uint32_t t) {
     }
 }
 
-// 鼠标纯移动限流（80ms 一条，足够看出滑动方向又不刷屏）
+// 鼠标纯移动限流（100ms 一条，够看方向又不刷屏）
 static NSTimeInterval gLastMouseMoveLog = 0;
 
-static void SnifDumpEvent(SnifIOHIDEventRef event, int depth) {
-    if (!event || !pGetType) return;
-    uint32_t t = pGetType(event);
-    NSMutableString *m = [NSMutableString stringWithFormat:@"%*s", depth * 2, ""];
-    [m appendFormat:@"t=%u(%@)", t, SnifTypeName(t)];
-
+// 只做「描述字符串」，不做 children 递归（递归是崩溃高发区）。@try 无法捕获 C 内存错，
+// 因此这里只访问最安全的事件字段。
+static NSString *SnifDescribe(SnifIOHIDEventRef event, uint32_t t) {
+    if (!event || !pGetInt) return nil;
+    NSMutableString *m = [NSMutableString stringWithFormat:@"t=%u(%@)", t, SnifTypeName(t)];
     if (t == SnifEvtKeyboard) {
-        for (uint32_t i = 0; i < 4; i++) { CFIndex v = pGetInt(event, SnifField(t, i)); if (v) [m appendFormat:@" f%u=%lld", i, (long long)v]; }
-        CFIndex page = pGetInt(event, SnifField(3, 0));
+        CFIndex page  = pGetInt(event, SnifField(3, 0));
         CFIndex usage = pGetInt(event, SnifField(3, 1));
         CFIndex down  = pGetInt(event, SnifField(3, 2));
         [m appendFormat:@"  >>> page=0x%llx usage=0x%llx down=%lld", (long long)page, (long long)usage, (long long)down];
@@ -88,90 +82,61 @@ static void SnifDumpEvent(SnifIOHIDEventRef event, int depth) {
             else if (usage == 0x28) [m appendString:@"  [回车]"];
             else if (usage == 0x29) [m appendString:@"  [ESC]"];
         }
-        SnifLog(m);
     } else if (t == SnifEvtMouse) {
         CFIndex x = pGetInt(event, SnifField(5, 0));
         CFIndex y = pGetInt(event, SnifField(5, 1));
         CFIndex btn = pGetInt(event, SnifField(5, 10));
         if (btn == 0) { // 纯移动
             NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-            if (now - gLastMouseMoveLog >= 0.08) {
-                gLastMouseMoveLog = now;
-                [m appendFormat:@"  >>> MOVE x=%lld y=%lld", (long long)x, (long long)y];
-                SnifLog(m);
-            }
-        } else { // 按键（点击）
-            for (uint32_t i = 0; i < 16; i++) { CFIndex v = pGetInt(event, SnifField(t, i)); if (v) [m appendFormat:@" f%u=%lld", i, (long long)v]; }
+            if (now - gLastMouseMoveLog < 0.1) return nil; // 限流
+            gLastMouseMoveLog = now;
+            [m appendFormat:@"  >>> MOVE x=%lld y=%lld", (long long)x, (long long)y];
+        } else { // 点击
             [m appendFormat:@"  >>> CLICK x=%lld y=%lld btnMask=0x%llx", (long long)x, (long long)y, (long long)btn];
-            SnifLog(m);
         }
     } else if (t == SnifEvtScroll) {
-        for (uint32_t i = 0; i < 4; i++) { CFIndex v = pGetInt(event, SnifField(t, i)); if (v) [m appendFormat:@" f%u=%lld", i, (long long)v]; }
-        [m appendString:@"  >>> 滚轮"];
-        SnifLog(m);
+        CFIndex x = pGetInt(event, SnifField(9, 0));
+        CFIndex y = pGetInt(event, SnifField(9, 1));
+        [m appendFormat:@"  >>> 滚轮 x=%lld y=%lld", (long long)x, (long long)y];
     } else if (t == SnifEvtDigitizer) {
-        // 手指触摸屏幕事件，极高频，默认忽略（遥控器用不到）
+        return nil; // 手指触摸，忽略
     } else {
-        for (uint32_t i = 0; i < 8; i++) { CFIndex v = pGetInt(event, SnifField(t, i)); if (v) [m appendFormat:@" f%u=%lld", i, (long long)v]; }
-        SnifLog(m);
+        for (uint32_t i = 0; i < 4; i++) { CFIndex v = pGetInt(event, SnifField(t, i)); if (v) [m appendFormat:@" f%u=%lld", i, (long long)v]; }
     }
-    CFArrayRef ch = pGetChildren ? pGetChildren(event) : NULL;
-    CFIndex n = ch ? CFArrayGetCount(ch) : 0;
-    for (CFIndex i = 0; i < n; i++) SnifDumpEvent((SnifIOHIDEventRef)CFArrayGetValueAtIndex(ch, i), depth + 1);
+    return m;
 }
 
-// ===== A. 自建客户端被动监听 =====
+// ===== 自建客户端被动监听 =====
 static SnifIOHIDEventSystemClientRef gOwnClient = NULL;
+
 static void SnifOwnCallback(void *target, void *refcon, SnifIOHIDEventRef event, void *sender) {
-    @try { SnifDumpEvent(event, 0); } @catch (__unused NSException *e) {}
+    @try {
+        if (!event || !pGetType) return;
+        uint32_t t = pGetType(event);
+        NSString *line = SnifDescribe(event, t);
+        if (!line) return;
+        // 切到主队列写日志，避免在 HID 回调线程做 I/O
+        dispatch_async(dispatch_get_main_queue(), ^{ SnifLog(line); });
+    } @catch (__unused NSException *e) {}
 }
+
 static void SnifStartOwnClient(void) {
     @try {
         if (!pCreate || !pSchedule || !pRegCb) { SnifLog(@"[A] IOKit 函数未解析，无法自建客户端"); return; }
         gOwnClient = pCreate(kCFAllocatorDefault);
         if (!gOwnClient) { SnifLog(@"[A] 自建 HID 客户端失败（NULL）"); return; }
         pSchedule(gOwnClient, dispatch_get_main_queue());
-        // 用原始（未 hook）注册函数，避免被自己的 hook 再包一层
-        void (*realReg)(SnifIOHIDEventSystemClientRef, SnifHIDCallback, void *, CFDictionaryRef) = pRegCb;
-        realReg(gOwnClient, SnifOwnCallback, NULL, NULL);
-        SnifLog(@"[A] 自建 HID 客户端已注册，正在被动监听全部事件");
-    } @catch (NSException *e) { SnifLog([@"[A] 异常: " stringByAppendingString:e.reason]); }
-}
-
-// ===== B. hook 系统注册函数（对照）=====
-static SnifHIDCallback gOrigCallback = NULL;
-static SnifHIDBlock gOrigBlock = nil;
-static SnifHIDBlock gWrapBlock = nil;
-
-static void SnifWrapCallback(void *target, void *refcon, SnifIOHIDEventRef event, void *sender) {
-    @try { SnifDumpEvent(event, 0); } @catch (__unused NSException *e) {}
-    if (gOrigCallback) gOrigCallback(target, refcon, event, sender);
-}
-
-static void (*orig_RegCb)(SnifIOHIDEventSystemClientRef, SnifHIDCallback, void *, CFDictionaryRef);
-static void hook_RegCb(SnifIOHIDEventSystemClientRef client, SnifHIDCallback cb, void *ctx, CFDictionaryRef match) {
-    gOrigCallback = cb;
-    SnifLog([NSString stringWithFormat:@"[B] 系统 RegisterEventCallback client=%p（已挂钩）", client]);
-    if (orig_RegCb) orig_RegCb(client, SnifWrapCallback, ctx, match);
-}
-
-static void (*orig_RegBlock)(SnifIOHIDEventSystemClientRef, SnifHIDBlock, void *, CFDictionaryRef);
-static void hook_RegBlock(SnifIOHIDEventSystemClientRef client, SnifHIDBlock block, void *ctx, CFDictionaryRef match) {
-    gOrigBlock = [block copy];
-    SnifLog([NSString stringWithFormat:@"[B] 系统 RegisterEventBlock client=%p（已挂钩）", client]);
-    if (!gWrapBlock) {
-        gWrapBlock = [^(void *target, SnifIOHIDEventRef event, void *sender) {
-            @try { SnifDumpEvent(event, 0); } @catch (__unused NSException *e) {}
-            if (gOrigBlock) gOrigBlock(target, event, sender);
-        } copy];
+        pRegCb(gOwnClient, SnifOwnCallback, NULL, NULL); // matching=NULL 监听全部
+        SnifLog(@"[A] 自建 HID 客户端已注册，正在被动监听（v1.0.1 安全版）");
+    } @catch (NSException *e) {
+        SnifLog([@"[A] 自建客户端异常: " stringByAppendingString:e.reason]);
     }
-    if (orig_RegBlock) orig_RegBlock(client, gWrapBlock, ctx, match);
 }
 
 %ctor {
     @autoreleasepool {
         SnifLog(@"==================================================");
-        SnifLog([NSString stringWithFormat:@"HIDEventSniffer 已注入 SpringBoard，iOS %@", UIDevice.currentDevice.systemVersion]);
+        SnifLog([NSString stringWithFormat:@"HIDEventSniffer v1.0.1 已注入 SpringBoard，iOS %@", UIDevice.currentDevice.systemVersion]);
         SnifLog(@"请把翻页器每个按钮（音量+/-、四方向、点击）各按 2~3 下");
         SnifLog(@"==================================================");
 
@@ -180,26 +145,20 @@ static void hook_RegBlock(SnifIOHIDEventSystemClientRef client, SnifHIDBlock blo
             if (iokit) {
                 void *hGetType  = dlsym(iokit, "IOHIDEventGetType");
                 void *hGetInt   = dlsym(iokit, "IOHIDEventGetIntegerValue");
-                void *hGetChild = dlsym(iokit, "IOHIDEventGetChildren");
                 void *hCreate   = dlsym(iokit, "IOHIDEventSystemClientCreate");
                 void *hSchedule = dlsym(iokit, "IOHIDEventSystemClientScheduleWithDispatchQueue");
                 void *hRegCb    = dlsym(iokit, "IOHIDEventSystemClientRegisterEventCallback");
-                void *hRegBlock = dlsym(iokit, "IOHIDEventSystemClientRegisterEventBlock");
-                pGetType     = (__typeof__(pGetType))hGetType;
-                pGetInt      = (__typeof__(pGetInt))hGetInt;
-                pGetChildren = (__typeof__(pGetChildren))hGetChild;
-                pCreate      = (__typeof__(pCreate))hCreate;
-                pSchedule    = (__typeof__(pSchedule))hSchedule;
-                pRegCb       = (__typeof__(pRegCb))hRegCb;
-                pRegBlock    = (__typeof__(pRegBlock))hRegBlock;
-                SnifLog([NSString stringWithFormat:@"IOKit 解析: GetType=%d GetInt=%d Create=%d RegCb=%d RegBlock=%d",
-                         pGetType != NULL, pGetInt != NULL, pCreate != NULL, pRegCb != NULL, pRegBlock != NULL]);
-                if (hRegCb)    MSHookFunction(hRegCb, (void *)hook_RegCb, (void **)&orig_RegCb);
-                if (hRegBlock) MSHookFunction(hRegBlock, (void *)hook_RegBlock, (void **)&orig_RegBlock);
+                pGetType = (__typeof__(pGetType))hGetType;
+                pGetInt  = (__typeof__(pGetInt))hGetInt;
+                pCreate  = (__typeof__(pCreate))hCreate;
+                pSchedule = (__typeof__(pSchedule))hSchedule;
+                pRegCb   = (__typeof__(pRegCb))hRegCb;
+                SnifLog([NSString stringWithFormat:@"IOKit 解析: GetType=%d GetInt=%d Create=%d RegCb=%d",
+                         pGetType != NULL, pGetInt != NULL, pCreate != NULL, pRegCb != NULL]);
             } else {
                 SnifLog(@"dlopen IOKit 失败");
             }
-        } @catch (NSException *e) { SnifLog([@"初始化 hook 异常: " stringByAppendingString:e.reason]); }
+        } @catch (NSException *e) { SnifLog([@"初始化异常: " stringByAppendingString:e.reason]); }
 
         dispatch_async(dispatch_get_main_queue(), ^{ SnifStartOwnClient(); });
     }
