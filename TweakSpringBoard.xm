@@ -1,10 +1,9 @@
-// HIDEventSniffer v1.0.1 —— 蓝牙翻页器 HID 事件抓取诊断（注入 SpringBoard）
-// 只观察、只记录，绝不修改/吞掉任何事件。
-//
-// 【v1.0.1 重大变更】删除全部 MSHookFunction（hook 系统 RegisterEventCallback/Block），
-// 那是在 SpringBoard 崩溃进安全模式的元凶。现在只保留「自建 HID 客户端」被动监听，
-// 完全不碰系统原有客户端/回调，最大程度降低风险。
-// 日志：/var/mobile/Documents/HIDEventSniffer.log （同时 NSLog 到系统日志）
+// HIDEventSniffer v1.0.2 SpringBoard 端 —— 蓝牙翻页器事件抓取（统一日志接收）
+// 职责：
+//   1. 保留自建 HID 客户端被动监听（系统级事件，能收则收）
+//   2. 监听 Darwin 通知 com.yourname.hidsniffer.event，把 App 进程转发来的
+//      方向键/点击/触摸事件写入同一份日志
+// 日志：/var/mobile/Documents/HIDEventSniffer.log
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -127,18 +126,32 @@ static void SnifStartOwnClient(void) {
         if (!gOwnClient) { SnifLog(@"[A] 自建 HID 客户端失败（NULL）"); return; }
         pSchedule(gOwnClient, dispatch_get_main_queue());
         pRegCb(gOwnClient, SnifOwnCallback, NULL, NULL); // matching=NULL 监听全部
-        SnifLog(@"[A] 自建 HID 客户端已注册，正在被动监听（v1.0.1 安全版）");
+        SnifLog(@"[A] 自建 HID 客户端已注册，正在被动监听（v1.0.2）");
     } @catch (NSException *e) {
         SnifLog([@"[A] 自建客户端异常: " stringByAppendingString:e.reason]);
+    }
+}
+
+// ===== 接收 App 进程转发的方向键/点击事件 =====
+static void SnifOnAppEvent(CFNotificationCenterRef center, void *observer,
+                           CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    if (object) {
+        SnifLog([NSString stringWithFormat:@"[app] %@", (__bridge NSString *)object]);
     }
 }
 
 %ctor {
     @autoreleasepool {
         SnifLog(@"==================================================");
-        SnifLog([NSString stringWithFormat:@"HIDEventSniffer v1.0.1 已注入 SpringBoard，iOS %@", UIDevice.currentDevice.systemVersion]);
-        SnifLog(@"请把翻页器每个按钮（音量+/-、四方向、点击）各按 2~3 下");
+        SnifLog([NSString stringWithFormat:@"HIDEventSniffer v1.0.2 已注入 SpringBoard，iOS %@", UIDevice.currentDevice.systemVersion]);
+        SnifLog(@"请打开任意 App，把翻页器每个按钮（音量+/-、四方向、点击）各按 2~3 下");
         SnifLog(@"==================================================");
+
+        // 注册 Darwin 通知，接收 App 进程转发的事件
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinCenter(), NULL,
+                                        SnifOnAppEvent,
+                                        CFSTR("com.yourname.hidsniffer.event"), NULL,
+                                        CFNotificationSuspensionBehaviorDeliverImmediately);
 
         @try {
             void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW);

@@ -45,12 +45,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RAW=$(ls packages/*.deb | head -1)
-          DEB=HIDEventSniffer-1.0.1-roothide.deb
+          DEB=HIDEventSniffer-1.0.2-roothide.deb
           cp "$RAW" "$DEB"
-          TAG=v1.0.1
-          NOTES=$'HID 事件抓取诊断 v1.0.1（roothide 直装，仅注入 SpringBoard）\n\n【本次修复】删除了 hook 系统 HID 注册函数的危险代码（v1.0.0 导致 SpringBoard 崩溃进安全模式），\n仅保留自建 HID 客户端被动监听，不再碰系统任何回调，安全模式风险归零。\n\n安装后注销桌面，把翻页器每个按钮（音量+/-、四方向、点击）各按 2~3 下，日志在：\n/var/mobile/Documents/HIDEventSniffer.log\n\n只记录事件、不改变任何操作，可随时卸载。'
+          TAG=v1.0.2
+          NOTES=$'HID 事件抓取诊断 v1.0.2（roothide 直装）\n\n【本次更新】拆成双进程抓取：\n- SpringBoard 端：自建 HID 监听 + 统一写日志（/var/mobile/Documents/HIDEventSniffer.log）\n- App 端：注入所有 App，在 App 内捕获蓝牙键盘方向键/回车/点击/触摸，转发给 SpringBoard 记录\n\n【为什么改】v1.0.1 实测：iOS16 的 HID 事件由 backboardd 路由给前台 App，\nSpringBoard 进程自建客户端收不到任何事件（日志只有注入信息、无按键记录）。\n\n【怎么测】安装 → 注销 → 打开任意 App（建议番茄小说）→ 把翻页器每个按钮各按 2~3 下\n→ Filza 查看 /var/mobile/Documents/HIDEventSniffer.log，能看到 [app] 开头的按键记录。\n\n只记录、不改变任何操作，可随时卸载。'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$DEB" --clobber
           else
-            gh release create "$TAG" "$DEB" --title "HIDEventSniffer v1.0.0" --notes "$NOTES"
+            gh release create "$TAG" "$DEB" --title "HIDEventSniffer v1.0.2" --notes "$NOTES"
           fi
