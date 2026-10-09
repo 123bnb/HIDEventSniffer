@@ -1,0 +1,54 @@
+name: Build HIDEventSniffer
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      THEOS: ${{ github.workspace }}/theos
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone Theos (roothide fork)
+        run: git clone --recursive --depth=1 https://github.com/roothide/theos.git "$THEOS"
+
+      - name: Get iOS 16.5 SDK
+        uses: actions/checkout@v4
+        with:
+          repository: theos/sdks
+          sparse-checkout: iPhoneOS16.5.sdk
+          path: theos/sdks
+
+      - name: Install dpkg & ldid
+        run: brew install dpkg ldid
+
+      - name: Build roothide deb
+        run: |
+          make clean
+          make package THEOS_PACKAGE_SCHEME=roothide
+          echo "===== 产物 ====="
+          ls -la packages/
+          DEB=$(ls packages/*.deb | head -1)
+          echo "deb=$DEB"
+          dpkg-deb -f "$DEB" | grep -E '^(Package|Version|Architecture):'
+
+      - name: Publish Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DEB=$(ls packages/*roothide*.deb | head -1)
+          TAG=v1.0.0
+          NOTES=$'HID 事件抓取诊断（roothide 直装，仅注入 SpringBoard）\n\n安装后重启桌面（注销），把翻页器每个按钮按 2~3 下，日志在：\n/var/mobile/Documents/HIDEventSniffer.log\n\n只记录事件、不改变任何操作，可随时卸载。'
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DEB" --clobber
+          else
+            gh release create "$TAG" "$DEB" --title "HIDEventSniffer v1.0.0" --notes "$NOTES"
+          fi
