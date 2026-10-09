@@ -178,17 +178,24 @@ static void hook_RegBlock(SnifIOHIDEventSystemClientRef client, SnifHIDBlock blo
         @try {
             void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW);
             if (iokit) {
-                pGetType     = (void *)dlsym(iokit, "IOHIDEventGetType");
-                pGetInt      = (void *)dlsym(iokit, "IOHIDEventGetIntegerValue");
-                pGetChildren = (void *)dlsym(iokit, "IOHIDEventGetChildren");
-                pCreate      = (void *)dlsym(iokit, "IOHIDEventSystemClientCreate");
-                pSchedule    = (void *)dlsym(iokit, "IOHIDEventSystemClientScheduleWithDispatchQueue");
-                pRegCb       = (void *)dlsym(iokit, "IOHIDEventSystemClientRegisterEventCallback");
-                pRegBlock    = (void *)dlsym(iokit, "IOHIDEventSystemClientRegisterEventBlock");
+                void *hGetType  = dlsym(iokit, "IOHIDEventGetType");
+                void *hGetInt   = dlsym(iokit, "IOHIDEventGetIntegerValue");
+                void *hGetChild = dlsym(iokit, "IOHIDEventGetChildren");
+                void *hCreate   = dlsym(iokit, "IOHIDEventSystemClientCreate");
+                void *hSchedule = dlsym(iokit, "IOHIDEventSystemClientScheduleWithDispatchQueue");
+                void *hRegCb    = dlsym(iokit, "IOHIDEventSystemClientRegisterEventCallback");
+                void *hRegBlock = dlsym(iokit, "IOHIDEventSystemClientRegisterEventBlock");
+                pGetType     = (__typeof__(pGetType))hGetType;
+                pGetInt      = (__typeof__(pGetInt))hGetInt;
+                pGetChildren = (__typeof__(pGetChildren))hGetChild;
+                pCreate      = (__typeof__(pCreate))hCreate;
+                pSchedule    = (__typeof__(pSchedule))hSchedule;
+                pRegCb       = (__typeof__(pRegCb))hRegCb;
+                pRegBlock    = (__typeof__(pRegBlock))hRegBlock;
                 SnifLog([NSString stringWithFormat:@"IOKit 解析: GetType=%d GetInt=%d Create=%d RegCb=%d RegBlock=%d",
                          pGetType != NULL, pGetInt != NULL, pCreate != NULL, pRegCb != NULL, pRegBlock != NULL]);
-                if (pRegCb)    MSHookFunction((void *)pRegCb, (void *)hook_RegCb, (void **)&orig_RegCb);
-                if (pRegBlock) MSHookFunction((void *)pRegBlock, (void *)hook_RegBlock, (void **)&orig_RegBlock);
+                if (hRegCb)    MSHookFunction(hRegCb, (void *)hook_RegCb, (void **)&orig_RegCb);
+                if (hRegBlock) MSHookFunction(hRegBlock, (void *)hook_RegBlock, (void **)&orig_RegBlock);
             } else {
                 SnifLog(@"dlopen IOKit 失败");
             }
