@@ -55,6 +55,11 @@ static uint64_t (*pGetSenderID)(HIDEventRef);
 static CFStringRef (*pGetSenderUniqueID)(HIDEventRef);
 static uint32_t (*pGetEventType)(HIDEventRef);
 static CFTypeID (*pGetTypeID)(void);
+static int64_t (*pGetIntegerValue)(HIDEventRef, uint32_t); // IOHIDEventGetIntegerValue，读 vid/pid
+
+// IOHIDEvent 字段（IOKit hid 私有枚举）：vendorID=0x5 productID=0x6
+#define KHIDFieldVendorID 0x00000005
+#define KHIDFieldProductID 0x00000006
 
 // 缓存 HID ivar（UIEvent/UITouch），首次扫描后复用，避免每次事件都扫
 static Ivar gHIDIvarUIEvent = NULL;
@@ -124,7 +129,8 @@ static HIDEventRef SnifHIDEvent(UIEvent *event) {
     return NULL;
 }
 
-// 设备溯源：senderID + uniqueID + HID事件类型。ID 原始值始终显示，屏幕/蓝牙必不同
+// 设备溯源：senderID + uniqueID + HID事件类型 + vendorID/productID。
+// vid/pid 是设备固件写死的，重启/重连不变 —— 这是认住翻页器的稳定特征
 static NSString *SnifDeviceDesc(UIEvent *event) {
     HIDEventRef hid = SnifHIDEvent(event);
     if (!hid) return @"设备=未知(HIDRef=NULL)";
@@ -137,11 +143,17 @@ static NSString *SnifDeviceDesc(UIEvent *event) {
     }
     NSString *typeStr = @"?";
     if (pGetEventType) typeStr = [NSString stringWithFormat:@"%u", (unsigned)pGetEventType(hid)];
+    NSString *vpStr = @"vid=? pid=?";
+    if (pGetIntegerValue) {
+        int64_t vid = pGetIntegerValue(hid, KHIDFieldVendorID);
+        int64_t pid = pGetIntegerValue(hid, KHIDFieldProductID);
+        vpStr = [NSString stringWithFormat:@"vid=0x%llx pid=0x%llx", vid, pid];
+    }
     if (sid == 0 && uid.length == 0)
-        return [NSString stringWithFormat:@"设备=屏幕(手指) id=0x%llx uid=(null) hidType=%@", sid, typeStr];
+        return [NSString stringWithFormat:@"设备=屏幕(手指) id=0x%llx %@ hidType=%@", sid, vpStr, typeStr];
     if (uid.length)
-        return [NSString stringWithFormat:@"设备=蓝牙HID id=0x%llx uid=%@ hidType=%@", sid, uid, typeStr];
-    return [NSString stringWithFormat:@"设备=外部HID id=0x%llx uid=(null) hidType=%@", sid, typeStr];
+        return [NSString stringWithFormat:@"设备=蓝牙HID id=0x%llx uid=%@ %@ hidType=%@", sid, uid, vpStr, typeStr];
+    return [NSString stringWithFormat:@"设备=外部HID id=0x%llx uid=(null) %@ hidType=%@", sid, vpStr, typeStr];
 }
 
 // 诊断：打印 UIEvent/UITouch 里所有含 hid/event 的 ivar 名+类型
@@ -180,6 +192,27 @@ static NSString *SnifConnectedBTDevices(void) {
         }
     } @catch (__unused NSException *e) {}
     return out.count ? [out componentsJoinedByString:@" "] : @"（未检测到已连接蓝牙设备）";
+}
+
+// IOBluetooth 私有框架（更底层，HID 设备也能看到）：列已配对设备
+static NSString *SnifIOBluetoothDevices(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    @try {
+        // 先尝试 dlopen 私有框架，让类可被发现
+        dlopen("/System/Library/PrivateFrameworks/IOBluetooth.framework/IOBluetooth", RTLD_NOW);
+        Class cls = NSClassFromString(@"IOBluetoothDevice");
+        if (cls) {
+            NSArray *devs = [cls performSelector:NSSelectorFromString(@"pairedDevices")];
+            for (id d in devs) {
+                NSString *name = [d performSelector:NSSelectorFromString(@"nameOrAddress")];
+                NSString *addr = [d performSelector:NSSelectorFromString(@"addressString")];
+                if (name.length) {
+                    [out addObject:[NSString stringWithFormat:@"%@(%@)", name, addr.length ? addr : @"?"]];
+                }
+            }
+        }
+    } @catch (__unused NSException *e) {}
+    return out.count ? [out componentsJoinedByString:@"  "] : @"（IOBluetooth无已配对设备）";
 }
 
 // 按键名映射（HID usage，UIKeyboardHIDUsage）
@@ -310,19 +343,22 @@ static NSTimeInterval gLastMoveLog = 0; // 移动限流 100ms
                 pGetSenderUniqueID = (__typeof__(pGetSenderUniqueID))dlsym(iokit, "IOHIDEventGetSenderUniqueID");
                 pGetEventType = (__typeof__(pGetEventType))dlsym(iokit, "IOHIDEventGetType");
                 pGetTypeID = (__typeof__(pGetTypeID))dlsym(iokit, "IOHIDEventGetTypeID");
+                pGetIntegerValue = (__typeof__(pGetIntegerValue))dlsym(iokit, "IOHIDEventGetIntegerValue");
             }
         } @catch (__unused NSException *e) {}
 
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
-        SnifLog(@"==================================================");
-        SnifLog([NSString stringWithFormat:@"HIDEventSniffer v1.0.6 已注入 Preferences（bundle=%@）", bundleID]);
-        SnifLog([NSString stringWithFormat:@"IOKit符号: SenderID=%d UniqueID=%d Type=%d TypeID=%d",
-                 pGetSenderID != NULL, pGetSenderUniqueID != NULL, pGetEventType != NULL, pGetTypeID != NULL]);
-        SnifLog([NSString stringWithFormat:@"UIEvent含hid/event的ivar: %@", DumpHIDIvars([UIEvent class])]);
-        SnifLog([NSString stringWithFormat:@"UITouch含hid/event的ivar: %@", DumpHIDIvars([UITouch class])]);
-        SnifLog([NSString stringWithFormat:@"已连接蓝牙设备: %@", SnifConnectedBTDevices()]);
-        SnifLog(@"请打开本设置页，用翻页器按键：音量+/-、四方向、点击，各按2~3下");
-        SnifLog([NSString stringWithFormat:@"日志路径: %@", SnifLogPath()]);
-        SnifLog(@"==================================================");
+        // [诊断] 前缀行在设置页固定置顶显示，不会被事件日志刷掉
+        SnifLog(@"[诊断] ==================================================");
+        SnifLog([NSString stringWithFormat:@"[诊断] HIDEventSniffer v1.0.7 已注入 Preferences（bundle=%@）", bundleID]);
+        SnifLog([NSString stringWithFormat:@"[诊断] IOKit符号: SenderID=%d UniqueID=%d Type=%d TypeID=%d GetInteger=%d",
+                 pGetSenderID != NULL, pGetSenderUniqueID != NULL, pGetEventType != NULL, pGetTypeID != NULL, pGetIntegerValue != NULL]);
+        SnifLog([NSString stringWithFormat:@"[诊断] UIEvent含hid/event的ivar: %@", DumpHIDIvars([UIEvent class])]);
+        SnifLog([NSString stringWithFormat:@"[诊断] UITouch含hid/event的ivar: %@", DumpHIDIvars([UITouch class])]);
+        SnifLog([NSString stringWithFormat:@"[诊断] BluetoothManager已连接: %@", SnifConnectedBTDevices()]);
+        SnifLog([NSString stringWithFormat:@"[诊断] IOBluetooth已配对: %@", SnifIOBluetoothDevices()]);
+        SnifLog(@"[诊断] 请打开本设置页，用翻页器按键：音量+/-、四方向、点击，各按2~3下");
+        SnifLog([NSString stringWithFormat:@"[诊断] 日志路径: %@", SnifLogPath()]);
+        SnifLog(@"[诊断] ==================================================");
     }
 }
