@@ -12,5 +12,7 @@ HIDEventSniffer_FRAMEWORKS = UIKit
 HIDEventSniffer_PRIVATE_FRAMEWORKS = Preferences
 HIDEventSniffer_INSTALL_PATH = /Library/PreferenceBundles
 HIDEventSniffer_CFLAGS = -fobjc-arc -Wno-arc-performSelector-leaks
+# 允许未定义符号在运行时解析（CFNotificationCenterGetDarwinCenter 是私有符号，运行时存在）
+HIDEventSniffer_LDFLAGS = -Wl,-undefined,dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/bundle.mk
