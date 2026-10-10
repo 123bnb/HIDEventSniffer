@@ -45,12 +45,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RAW=$(ls packages/*.deb | head -1)
-          DEB=HIDEventSniffer-1.0.8-roothide.deb
+          DEB=HIDEventSniffer-1.0.9-roothide.deb
           cp "$RAW" "$DEB"
-          TAG=v1.0.8
-          NOTES=$'HID 事件抓取诊断 v1.0.8（roothide 直装）\n\n【本次更新】\n1. 新增「重启插件」按钮：清空日志后点它，插件立刻重写诊断信息（等同插件重新初始化），不用注销/重启手机\n   —— 通过 darwin 通知实现，Tweak 收到后清空日志文件并重新写入全部 [诊断] 行\n2. 按钮区改为三个：刷新日志 / 清空 / 重启插件\n3. 说明：vid/pid 在 App 层读到的都是 0x0（UIKit 转发事件时被系统清零，VID/PID 只有 backboardd 底层才有）；\n   可用指纹是 senderID（id=0x..），不同设备固定且不同\n\n【架构】只注入 Preferences：设置 → HIDEventSniffer → 日志页（手动刷新）\n\n【怎么测】安装 → 注销 → 进设置 → HIDEventSniffer → 点「重启插件」看诊断行重新出现，\n然后手指+翻页器按键，点「刷新日志」看每行 id=0x..。只记录、不改变任何操作。'
+          TAG=v1.0.9
+          NOTES=$'HID 事件抓取诊断 v1.0.9（roothide 直装）\n\n【本次更新】\n1. 修复设置页加载失败：v1.0.8 用了 CFNotificationCenterGetDarwinCenter（macOS 私有符号，iOS 不存在）\n   → dlopen 报 symbol not found in flat namespace。\n   改为同进程直接调用：设置页按钮与 Tweak 在同一 Preferences 进程，extern 直接调 SnifWriteDiagnostics()\n   （与一直正常工作的 SnifLogPath() 同一机制）\n2. 「重启插件」按钮逻辑不变：清空日志 → 立即重写全部 [诊断] 行 → 自动刷新\n\n【架构】只注入 Preferences：设置 → HIDEventSniffer → 日志页（手动刷新）\n\n【怎么测】安装 → 注销 → 设置 → HIDEventSniffer 能正常打开 → 点「重启插件」看诊断行重新出现，\n然后手指+翻页器按键，点「刷新日志」看每行 id=0x..。只记录、不改变任何操作。'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$DEB" --clobber
           else
-            gh release create "$TAG" "$DEB" --title "HIDEventSniffer v1.0.8" --notes "$NOTES"
+            gh release create "$TAG" "$DEB" --title "HIDEventSniffer v1.0.9" --notes "$NOTES"
           fi
