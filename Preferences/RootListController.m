@@ -163,19 +163,15 @@ static NSString *ConnectedBTDevices(void) {
     } @catch (__unused NSException *e) {}
 }
 
-// 重启插件：发 darwin 通知让 Tweak 清空日志并重写诊断信息（等同插件重新初始化）
+// 重启插件：清空日志 + 直接调用 Tweak 的诊断函数重写（同进程，无需通知）
+extern void SnifWriteDiagnostics(void);
 - (void)restartPlugin {
     @try {
-        extern CFNotificationCenterRef CFNotificationCenterGetDarwinCenter(void);
-        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinCenter(),
-                                              CFSTR("com.yourname.hideventsniffer/reload"),
-                                              NULL, NULL, YES);
+        [@"" writeToFile:SnifLogPath() atomically:YES encoding:NSUTF8StringEncoding error:nil];
         self.lastText = @"";
-        self.tv.text = @"（已发送重启指令，等待诊断重写…）";
-        // 0.8s 后自动拉一次，显示新诊断
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self refreshLog];
-        });
+        self.tv.text = @"（已重启：诊断重写中…）";
+        SnifWriteDiagnostics();
+        [self refreshLog];
     } @catch (__unused NSException *e) {}
 }
 
