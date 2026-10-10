@@ -83,7 +83,7 @@ static Ivar FindHIDIvar(Class cls, Ivar *cache) {
 static HIDEventRef HIDFromIvar(id obj, Ivar ivar) {
     if (!obj || !ivar || !pGetTypeID) return NULL;
     @try {
-        char *base = (__bridge char *)obj;
+        char *base = (char *)(__bridge void *)obj;
         void *addr = base + ivar_getOffset(ivar);
         HIDEventRef h = *(HIDEventRef *)addr;
         if (h && CFGetTypeID(h) == pGetTypeID()) return h;
