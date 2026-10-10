@@ -28,7 +28,5 @@ HIDEventSnifferApp_LIBRARIES = substrate
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-# 强制 OpenStep 格式 Filter（对齐左滑返回可注入写法）
-before-package::
-	printf '{ Filter = { Bundles = ( "com.apple.springboard"); }; }\n' > "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/HIDEventSniffer.plist"
-	printf '{ Filter = { Bundles = ( "com.apple.UIKit"); }; }\n' > "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/HIDEventSnifferApp.plist"
+# 源 plist（HIDEventSniffer.plist / HIDEventSnifferApp.plist）由 theos 自动 stage 进
+# DynamicLibraries，无需 before-package 手动写入。
