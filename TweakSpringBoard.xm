@@ -10,6 +10,8 @@
 #import <dispatch/dispatch.h>
 #import <dlfcn.h>
 
+extern CFNotificationCenterRef CFNotificationCenterGetDarwinCenter(void); // 私有API声明
+
 // ===== IOKit 私有 HID 接口类型（自行声明，不依赖私有头）=====
 typedef struct __IOHIDEvent *SnifIOHIDEventRef;
 typedef struct __IOHIDEventSystemClient *SnifIOHIDEventSystemClientRef;

@@ -14,6 +14,8 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
+extern CFNotificationCenterRef CFNotificationCenterGetDarwinCenter(void); // 私有API声明
+
 static NSString *const kNotifName = @"com.yourname.hidsniffer.event";
 
 // 转发给 SpringBoard 写日志（object 即事件描述字符串）
