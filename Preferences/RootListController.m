@@ -163,15 +163,15 @@ static NSString *ConnectedBTDevices(void) {
     } @catch (__unused NSException *e) {}
 }
 
-// 重启插件：清空日志 + 直接调用 Tweak 的诊断函数重写（同进程，无需通知）
-extern void SnifWriteDiagnostics(void);
+// 重启插件：发同进程通知（NSNotificationCenter 公共API）→ Tweak 清空日志并重写诊断
 - (void)restartPlugin {
     @try {
-        [@"" writeToFile:SnifLogPath() atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"SnifReloadRequested" object:nil];
         self.lastText = @"";
-        self.tv.text = @"（已重启：诊断重写中…）";
-        SnifWriteDiagnostics();
-        [self refreshLog];
+        self.tv.text = @"（已发送重启指令，诊断重写中…）";
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self refreshLog];
+        });
     } @catch (__unused NSException *e) {}
 }
 
