@@ -20,12 +20,8 @@
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
 #import <dlfcn.h>
-
-// IOKit 私有 HID 接口
-typedef struct __IOHIDEvent *HIDEventRef;
-static uint64_t (*pGetSenderID)(HIDEventRef);
-static CFStringRef (*pGetSenderUniqueID)(HIDEventRef);
 
 static NSString *SnifLogPath(void) {
     NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
@@ -87,7 +83,8 @@ static Ivar FindHIDIvar(Class cls, Ivar *cache) {
 static HIDEventRef HIDFromIvar(id obj, Ivar ivar) {
     if (!obj || !ivar || !pGetTypeID) return NULL;
     @try {
-        void *addr = (__bridge void *)obj + ivar_getOffset(ivar);
+        char *base = (__bridge char *)obj;
+        void *addr = base + ivar_getOffset(ivar);
         HIDEventRef h = *(HIDEventRef *)addr;
         if (h && CFGetTypeID(h) == pGetTypeID()) return h;
     } @catch (__unused NSException *e) {}
