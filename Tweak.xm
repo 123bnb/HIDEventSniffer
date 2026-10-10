@@ -334,11 +334,11 @@ static NSTimeInterval gLastMoveLog = 0; // 移动限流 100ms
 %end
 
 // 重新写入诊断信息（ctor 和「重启插件」按钮共用）
-// 非 static：设置页 bundle 与 Tweak 同进程，直接 extern 调用
-void SnifWriteDiagnostics(void) {
+// static：不导出。设置页 bundle 通过 NSNotificationCenter（同进程公共API）触发，不做跨镜像符号调用
+static void SnifWriteDiagnostics(void) {
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
     SnifLog(@"[诊断] ==================================================");
-    SnifLog([NSString stringWithFormat:@"[诊断] HIDEventSniffer v1.0.9 已注入 Preferences（bundle=%@）", bundleID]);
+    SnifLog([NSString stringWithFormat:@"[诊断] HIDEventSniffer v1.0.10 已注入 Preferences（bundle=%@）", bundleID]);
     SnifLog([NSString stringWithFormat:@"[诊断] IOKit符号: SenderID=%d UniqueID=%d Type=%d TypeID=%d GetInteger=%d",
              pGetSenderID != NULL, pGetSenderUniqueID != NULL, pGetEventType != NULL, pGetTypeID != NULL, pGetIntegerValue != NULL]);
     SnifLog([NSString stringWithFormat:@"[诊断] UIEvent含hid/event的ivar: %@", DumpHIDIvars([UIEvent class])]);
@@ -348,6 +348,18 @@ void SnifWriteDiagnostics(void) {
     SnifLog(@"[诊断] 请打开本设置页，用翻页器按键：音量+/-、四方向、点击，各按2~3下");
     SnifLog([NSString stringWithFormat:@"[诊断] 日志路径: %@", SnifLogPath()]);
     SnifLog(@"[诊断] ==================================================");
+}
+
+// 设置页「重启插件」按钮触发的同进程通知回调：清空日志 + 重写诊断
+static id gReloadObserver = nil;
+static void SnifHandleReloadRequest(NSNotification *note) {
+    @autoreleasepool {
+        @try {
+            NSString *path = SnifLogPath();
+            [@"" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        } @catch (__unused NSException *e) {}
+        SnifWriteDiagnostics();
+    }
 }
 
 %ctor {
@@ -363,6 +375,16 @@ void SnifWriteDiagnostics(void) {
                 pGetIntegerValue = (__typeof__(pGetIntegerValue))dlsym(iokit, "IOHIDEventGetIntegerValue");
             }
         } @catch (__unused NSException *e) {}
+
+        // 注册「重启插件」同进程通知（NSNotificationCenter 是公共API，无符号问题）
+        @try {
+            gReloadObserver = [[NSNotificationCenter defaultCenter]
+                addObserverForName:@"SnifReloadRequested" object:nil queue:nil
+                usingBlock:^(NSNotification *note) { SnifHandleReloadRequest(note); }];
+            SnifLog(@"[诊断] 已注册「重启插件」通知监听");
+        } @catch (__unused NSException *e) {
+            SnifLog(@"[诊断] 注册「重启插件」通知监听失败");
+        }
 
         SnifWriteDiagnostics();
     }
