@@ -333,6 +333,37 @@ static NSTimeInterval gLastMoveLog = 0; // 移动限流 100ms
 
 %end
 
+// 重新写入诊断信息（ctor 和「重启插件」按钮共用）
+// 清空日志后点设置页的「重启插件」，会清空日志并重新写入这份诊断
+static void SnifWriteDiagnostics(void) {
+    NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+    SnifLog(@"[诊断] ==================================================");
+    SnifLog([NSString stringWithFormat:@"[诊断] HIDEventSniffer v1.0.8 已注入 Preferences（bundle=%@）", bundleID]);
+    SnifLog([NSString stringWithFormat:@"[诊断] IOKit符号: SenderID=%d UniqueID=%d Type=%d TypeID=%d GetInteger=%d",
+             pGetSenderID != NULL, pGetSenderUniqueID != NULL, pGetEventType != NULL, pGetTypeID != NULL, pGetIntegerValue != NULL]);
+    SnifLog([NSString stringWithFormat:@"[诊断] UIEvent含hid/event的ivar: %@", DumpHIDIvars([UIEvent class])]);
+    SnifLog([NSString stringWithFormat:@"[诊断] UITouch含hid/event的ivar: %@", DumpHIDIvars([UITouch class])]);
+    SnifLog([NSString stringWithFormat:@"[诊断] BluetoothManager已连接: %@", SnifConnectedBTDevices()]);
+    SnifLog([NSString stringWithFormat:@"[诊断] IOBluetooth已配对: %@", SnifIOBluetoothDevices()]);
+    SnifLog(@"[诊断] 请打开本设置页，用翻页器按键：音量+/-、四方向、点击，各按2~3下");
+    SnifLog([NSString stringWithFormat:@"[诊断] 日志路径: %@", SnifLogPath()]);
+    SnifLog(@"[诊断] ==================================================");
+}
+
+// darwin 通知回调：「重启插件」按钮触发 → 清空日志 + 重写诊断
+static void SnifOnReload(CFNotificationCenterRef center, void *observer,
+                         CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    @autoreleasepool {
+        @try {
+            NSString *path = SnifLogPath();
+            [@"" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        } @catch (__unused NSException *e) {}
+        SnifWriteDiagnostics();
+    }
+}
+
+extern CFNotificationCenterRef CFNotificationCenterGetDarwinCenter(void);
+
 %ctor {
     @autoreleasepool {
         // 解析 IOKit 设备溯源函数
@@ -347,18 +378,16 @@ static NSTimeInterval gLastMoveLog = 0; // 移动限流 100ms
             }
         } @catch (__unused NSException *e) {}
 
-        NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
-        // [诊断] 前缀行在设置页固定置顶显示，不会被事件日志刷掉
-        SnifLog(@"[诊断] ==================================================");
-        SnifLog([NSString stringWithFormat:@"[诊断] HIDEventSniffer v1.0.7 已注入 Preferences（bundle=%@）", bundleID]);
-        SnifLog([NSString stringWithFormat:@"[诊断] IOKit符号: SenderID=%d UniqueID=%d Type=%d TypeID=%d GetInteger=%d",
-                 pGetSenderID != NULL, pGetSenderUniqueID != NULL, pGetEventType != NULL, pGetTypeID != NULL, pGetIntegerValue != NULL]);
-        SnifLog([NSString stringWithFormat:@"[诊断] UIEvent含hid/event的ivar: %@", DumpHIDIvars([UIEvent class])]);
-        SnifLog([NSString stringWithFormat:@"[诊断] UITouch含hid/event的ivar: %@", DumpHIDIvars([UITouch class])]);
-        SnifLog([NSString stringWithFormat:@"[诊断] BluetoothManager已连接: %@", SnifConnectedBTDevices()]);
-        SnifLog([NSString stringWithFormat:@"[诊断] IOBluetooth已配对: %@", SnifIOBluetoothDevices()]);
-        SnifLog(@"[诊断] 请打开本设置页，用翻页器按键：音量+/-、四方向、点击，各按2~3下");
-        SnifLog([NSString stringWithFormat:@"[诊断] 日志路径: %@", SnifLogPath()]);
-        SnifLog(@"[诊断] ==================================================");
+        // 注册「重启插件」darwin 通知（设置页按钮触发）
+        @try {
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinCenter(), NULL, SnifOnReload,
+                                            CFSTR("com.yourname.hideventsniffer/reload"), NULL,
+                                            CFNotificationSuspensionBehaviorDeliverImmediately);
+            SnifLog(@"[诊断] 已注册「重启插件」通知监听");
+        } @catch (__unused NSException *e) {
+            SnifLog(@"[诊断] 注册「重启插件」通知监听失败");
+        }
+
+        SnifWriteDiagnostics();
     }
 }
