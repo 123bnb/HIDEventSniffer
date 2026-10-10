@@ -7,7 +7,7 @@
 TARGET := iphone:clang:16.5:15.0
 INSTALL_TARGET_PROCESSES := Preferences
 THEOS_PACKAGE_SCHEME := roothide
-PACKAGE_VERSION := 1.0.8
+PACKAGE_VERSION := 1.0.9
 
 DEBUG = 0
 ARCHS = arm64 arm64e
