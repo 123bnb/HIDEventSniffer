@@ -11,6 +11,6 @@ HIDEventSniffer_FILES = RootListController.m
 HIDEventSniffer_FRAMEWORKS = UIKit
 HIDEventSniffer_PRIVATE_FRAMEWORKS = Preferences
 HIDEventSniffer_INSTALL_PATH = /Library/PreferenceBundles
-HIDEventSniffer_CFLAGS = -fobjc-arc
+HIDEventSniffer_CFLAGS = -fobjc-arc -Wno-arc-performSelector-leaks
 
 include $(THEOS_MAKE_PATH)/bundle.mk
