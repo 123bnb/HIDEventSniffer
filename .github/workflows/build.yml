@@ -45,12 +45,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RAW=$(ls packages/*.deb | head -1)
-          DEB=HIDEventSniffer-1.0.7-roothide.deb
+          DEB=HIDEventSniffer-1.0.8-roothide.deb
           cp "$RAW" "$DEB"
-          TAG=v1.0.7
-          NOTES=$'HID 事件抓取诊断 v1.0.7（roothide 直装）\n\n【本次更新】\n1. 设备特征钉死：事件日志追加 vendorID/productID（vid=0x.. pid=0x..）——设备固件写死的，重启/重连不变，是认住翻页器的稳定身份证\n2. 诊断行固定头部：所有以 [诊断] 开头的行固定在日志顶部不被事件刷掉，事件日志最新在上\n3. 取消自动刷新：改为手动点「刷新日志」，不再 0.6s 轮询\n4. 新增 IOBluetooth 私有框架探测已配对设备，与 BluetoothManager 对比，看哪个能见到翻页器\n\n【架构】只注入 Preferences：设置 → HIDEventSniffer → 日志页（手动刷新）\n\n【怎么测】安装 → 注销 → 进设置 → HIDEventSniffer → 顶部看诊断行（IOBluetooth/BluetoothManager 设备列表），\n然后分别用手指和翻页器按键，点「刷新日志」看每行：设备=屏幕/外部HID id=0x.. vid=0x.. pid=0x..。只记录、不改变任何操作。'
+          TAG=v1.0.8
+          NOTES=$'HID 事件抓取诊断 v1.0.8（roothide 直装）\n\n【本次更新】\n1. 新增「重启插件」按钮：清空日志后点它，插件立刻重写诊断信息（等同插件重新初始化），不用注销/重启手机\n   —— 通过 darwin 通知实现，Tweak 收到后清空日志文件并重新写入全部 [诊断] 行\n2. 按钮区改为三个：刷新日志 / 清空 / 重启插件\n3. 说明：vid/pid 在 App 层读到的都是 0x0（UIKit 转发事件时被系统清零，VID/PID 只有 backboardd 底层才有）；\n   可用指纹是 senderID（id=0x..），不同设备固定且不同\n\n【架构】只注入 Preferences：设置 → HIDEventSniffer → 日志页（手动刷新）\n\n【怎么测】安装 → 注销 → 进设置 → HIDEventSniffer → 点「重启插件」看诊断行重新出现，\n然后手指+翻页器按键，点「刷新日志」看每行 id=0x..。只记录、不改变任何操作。'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$DEB" --clobber
           else
-            gh release create "$TAG" "$DEB" --title "HIDEventSniffer v1.0.7" --notes "$NOTES"
+            gh release create "$TAG" "$DEB" --title "HIDEventSniffer v1.0.8" --notes "$NOTES"
           fi
