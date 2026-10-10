@@ -1,8 +1,8 @@
-// RootListController — HIDEventSniffer 设置页（极简日志页）
+// RootListController — HIDEventSniffer 设置页（手动刷新日志页）
 // 页面内容：
-//   - 顶部说明：打开本页后，用蓝牙翻页器按键，下方日志实时显示
-//   - 「刷新日志」按钮（也自动刷新：0.6s 轮询，进页即实时）
-//   - 日志区：最新一行在最上面（旧的下沉）
+//   - 顶部说明 + 已连接蓝牙设备（固定不动）
+//   - 「刷新日志」按钮（手动刷新，不做自动轮询）
+//   - 日志区：诊断行([诊断]开头)固定置顶，事件日志最新在上（旧的下沉）
 //   - 「清空」按钮
 // 日志读取 Preferences 沙盒 Documents/HIDEventSniffer.log（与 Tweak 同一路径）
 
@@ -41,7 +41,6 @@ static NSString *ConnectedBTDevices(void) {
 @property (nonatomic, strong) UITextView *tv;
 @property (nonatomic, strong) UILabel *hint;
 @property (nonatomic, strong) UILabel *btLabel;
-@property (nonatomic, strong) NSTimer *timer;
 @property (nonatomic, strong) NSString *lastText;
 @end
 
@@ -63,13 +62,13 @@ static NSString *ConnectedBTDevices(void) {
 
     // 说明文字
     self.hint = [[UILabel alloc] initWithFrame:CGRectMake(16, top, self.view.bounds.size.width - 32, 40)];
-    self.hint.text = @"打开本页后，用蓝牙翻页器按键（音量+/-、四方向、点击），下方实时显示捕获的键码。";
+    self.hint.text = @"打开本页后，用蓝牙翻页器按键，点「刷新日志」查看捕获的键码。诊断行固定在顶部。";
     self.hint.numberOfLines = 0;
     self.hint.font = [UIFont systemFontOfSize:13];
     self.hint.textColor = [UIColor secondaryLabelColor];
     [self.view addSubview:self.hint];
 
-    // 蓝牙设备对照
+    // 蓝牙设备对照（固定头部，不滚动）
     self.btLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, top + 42, self.view.bounds.size.width - 32, 30)];
     self.btLabel.text = [NSString stringWithFormat:@"已连接蓝牙: %@", ConnectedBTDevices()];
     self.btLabel.numberOfLines = 2;
@@ -78,7 +77,7 @@ static NSString *ConnectedBTDevices(void) {
     [self.view addSubview:self.btLabel];
 
     CGFloat btnY = top + 78;
-    // 刷新按钮
+    // 刷新按钮（手动）
     UIButton *refresh = [UIButton buttonWithType:UIButtonTypeSystem];
     refresh.frame = CGRectMake(16, btnY, (self.view.bounds.size.width - 48) / 2, 40);
     [refresh setTitle:@"刷新日志" forState:UIControlStateNormal];
@@ -108,18 +107,8 @@ static NSString *ConnectedBTDevices(void) {
     self.tv.layer.cornerRadius = 8;
     [self.view addSubview:self.tv];
 
+    // 手动刷新：进页刷一次，之后只靠按钮
     [self refreshLog];
-
-    // 自动刷新 0.6s
-    self.timer = [NSTimer scheduledTimerWithTimeInterval:0.6 target:self
-                                                selector:@selector(refreshLog)
-                                                userInfo:nil repeats:YES];
-}
-
-- (void)viewWillDisappear:(BOOL)animated {
-    [super viewWillDisappear:animated];
-    [self.timer invalidate];
-    self.timer = nil;
 }
 
 - (void)refreshLog {
@@ -134,15 +123,23 @@ static NSString *ConnectedBTDevices(void) {
         }
         NSString *content = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
         if (!content.length) return;
-        if ([content isEqualToString:self.lastText]) return; // 没变化不刷新，避免闪烁
-        // 最新在上：拆行反转
+        if ([content isEqualToString:self.lastText]) return; // 没变化不重绘，避免闪烁/选中失效
+        // 拆行；[诊断]行固定置顶，其余事件日志最新在上
         NSArray *lines = [content componentsSeparatedByString:@"\n"];
-        NSMutableArray *rev = [NSMutableArray array];
-        for (NSInteger i = lines.count - 1; i >= 0; i--) {
+        NSMutableArray *diag = [NSMutableArray array];
+        NSMutableArray *events = [NSMutableArray array];
+        for (NSInteger i = 0; i < (NSInteger)lines.count; i++) {
             NSString *ln = lines[i];
-            if (ln.length) [rev addObject:ln];
+            if (!ln.length) continue;
+            if ([ln hasPrefix:@"[诊断]"]) [diag addObject:ln];
+            else [events addObject:ln];
         }
-        self.tv.text = [rev componentsJoinedByString:@"\n"];
+        NSMutableArray *revEvents = [NSMutableArray array];
+        for (NSInteger i = events.count - 1; i >= 0; i--) [revEvents addObject:events[i]];
+        NSMutableArray *all = [NSMutableArray array];
+        [all addObjectsFromArray:diag];
+        [all addObjectsFromArray:revEvents];
+        self.tv.text = [all componentsJoinedByString:@"\n"];
         self.lastText = content;
     } @catch (__unused NSException *e) {}
 }
