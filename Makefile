@@ -17,7 +17,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = HIDEventSniffer
 
 HIDEventSniffer_FILES = Tweak.xm
-HIDEventSniffer_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-variable -Wno-unused-function
+HIDEventSniffer_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-variable -Wno-unused-function -Wno-arc-performSelector-leaks
 HIDEventSniffer_LDFLAGS = -Wl,-undefined,dynamic_lookup
 HIDEventSniffer_FRAMEWORKS = Foundation UIKit
 HIDEventSniffer_LIBRARIES = substrate
