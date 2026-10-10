@@ -53,29 +53,117 @@ static void SnifLog(NSString *s) {
     } @catch (__unused NSException *e) {}
 }
 
-// 从 UIEvent 取底层 IOHIDEventRef（私有 ivar，KVC 安全取值）
-static HIDEventRef SnifHIDEvent(UIEvent *event) {
-    if (!event) return NULL;
+// IOKit 私有 HID 接口（dlsym 动态解析，避免链接问题）
+typedef struct __IOHIDEvent *HIDEventRef;
+static uint64_t (*pGetSenderID)(HIDEventRef);
+static CFStringRef (*pGetSenderUniqueID)(HIDEventRef);
+static uint32_t (*pGetEventType)(HIDEventRef);
+static CFTypeID (*pGetTypeID)(void);
+
+// 缓存 HID ivar（UIEvent/UITouch），首次扫描后复用，避免每次事件都扫
+static Ivar gHIDIvarUIEvent = NULL;
+static Ivar gHIDIvarUITouch = NULL;
+
+static Ivar FindHIDIvar(Class cls, Ivar *cache) {
+    if (*cache) return *cache;
+    unsigned int count = 0;
+    Ivar *ivars = class_copyIvarList(cls, &count);
+    Ivar found = NULL;
+    for (unsigned int i = 0; i < count; i++) {
+        const char *nm = ivar_getName(ivars[i]);
+        if (!nm) continue;
+        NSString *n = [NSString stringWithUTF8String:nm];
+        if ([n rangeOfString:@"hid" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            found = ivars[i];
+            break;
+        }
+    }
+    free(ivars);
+    *cache = found;
+    return found;
+}
+
+// 从 obj 的 ivar 偏移直接读 HIDEventRef 指针，并用 CFTypeID 验证合法性
+static HIDEventRef HIDFromIvar(id obj, Ivar ivar) {
+    if (!obj || !ivar || !pGetTypeID) return NULL;
     @try {
-        id v = [event valueForKey:@"_hidEvent"];
-        if (v) return (__bridge HIDEventRef)v;
+        void *addr = (__bridge void *)obj + ivar_getOffset(ivar);
+        HIDEventRef h = *(HIDEventRef *)addr;
+        if (h && CFGetTypeID(h) == pGetTypeID()) return h;
     } @catch (__unused NSException *e) {}
     return NULL;
 }
 
-// 设备溯源：senderID + uniqueID 区分 屏幕/蓝牙/外部
+// 从 UIEvent 取底层 IOHIDEventRef：多路探测
+//   路1: KVC _hidEvent / hidEvent（常见 tweak 写法）
+//   路2: ivar 偏移直读（不依赖 KVC）
+//   路3: 触摸事件时从 UITouch 取（_hidEvent 可能在 touch 上）
+static HIDEventRef SnifHIDEvent(UIEvent *event) {
+    if (!event) return NULL;
+    // 路1
+    @try {
+        id v = [event valueForKey:@"_hidEvent"];
+        if (v && pGetTypeID && CFGetTypeID((__bridge CFTypeRef)v) == pGetTypeID()) return (__bridge HIDEventRef)v;
+    } @catch (__unused NSException *e) {}
+    @try {
+        id v = [event valueForKey:@"hidEvent"];
+        if (v && pGetTypeID && CFGetTypeID((__bridge CFTypeRef)v) == pGetTypeID()) return (__bridge HIDEventRef)v;
+    } @catch (__unused NSException *e) {}
+    // 路2
+    HIDEventRef h = HIDFromIvar(event, FindHIDIvar([UIEvent class], &gHIDIvarUIEvent));
+    if (h) return h;
+    // 路3
+    if (event.type == UIEventTypeTouches) {
+        UITouch *t = [event.allTouches anyObject];
+        if (t) {
+            @try {
+                id v = [t valueForKey:@"_hidEvent"];
+                if (v && pGetTypeID && CFGetTypeID((__bridge CFTypeRef)v) == pGetTypeID()) return (__bridge HIDEventRef)v;
+            } @catch (__unused NSException *e) {}
+            h = HIDFromIvar(t, FindHIDIvar([UITouch class], &gHIDIvarUITouch));
+            if (h) return h;
+        }
+    }
+    return NULL;
+}
+
+// 设备溯源：senderID + uniqueID + HID事件类型。ID 原始值始终显示，屏幕/蓝牙必不同
 static NSString *SnifDeviceDesc(UIEvent *event) {
     HIDEventRef hid = SnifHIDEvent(event);
-    if (!hid || !pGetSenderID) return @"设备=未知";
+    if (!hid) return @"设备=未知(HIDRef=NULL)";
+    if (!pGetSenderID) return @"设备=未知(IOHIDEventGetSenderID解析失败)";
     uint64_t sid = pGetSenderID(hid);
     NSString *uid = nil;
     if (pGetSenderUniqueID) {
         CFStringRef u = pGetSenderUniqueID(hid);
         if (u) uid = (__bridge NSString *)u;
     }
-    if (sid == 0 && uid.length == 0) return @"设备=屏幕(手指)";
-    if (uid.length) return [NSString stringWithFormat:@"设备=蓝牙HID id=0x%llx uid=%@", sid, uid];
-    return [NSString stringWithFormat:@"设备=外部HID id=0x%llx", sid];
+    NSString *typeStr = @"?";
+    if (pGetEventType) typeStr = [NSString stringWithFormat:@"%u", (unsigned)pGetEventType(hid)];
+    if (sid == 0 && uid.length == 0)
+        return [NSString stringWithFormat:@"设备=屏幕(手指) id=0x%llx uid=(null) hidType=%@", sid, typeStr];
+    if (uid.length)
+        return [NSString stringWithFormat:@"设备=蓝牙HID id=0x%llx uid=%@ hidType=%@", sid, uid, typeStr];
+    return [NSString stringWithFormat:@"设备=外部HID id=0x%llx uid=(null) hidType=%@", sid, typeStr];
+}
+
+// 诊断：打印 UIEvent/UITouch 里所有含 hid/event 的 ivar 名+类型
+static NSString *DumpHIDIvars(Class cls) {
+    NSMutableArray *arr = [NSMutableArray array];
+    unsigned int count = 0;
+    Ivar *ivars = class_copyIvarList(cls, &count);
+    for (unsigned int i = 0; i < count; i++) {
+        const char *nm = ivar_getName(ivars[i]);
+        const char *ty = ivar_getTypeEncoding(ivars[i]);
+        if (!nm) continue;
+        NSString *n = [NSString stringWithUTF8String:nm];
+        if ([n rangeOfString:@"hid" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [n rangeOfString:@"event" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            [arr addObject:[NSString stringWithFormat:@"%@:%s", n, ty ?: "?"]];
+        }
+    }
+    free(ivars);
+    return arr.count ? [arr componentsJoinedByString:@" "] : @"(无)";
 }
 
 // 当前已连接的蓝牙设备（名称+地址），用于对照识别翻页器
@@ -223,13 +311,18 @@ static NSTimeInterval gLastMoveLog = 0; // 移动限流 100ms
             if (iokit) {
                 pGetSenderID = (__typeof__(pGetSenderID))dlsym(iokit, "IOHIDEventGetSenderID");
                 pGetSenderUniqueID = (__typeof__(pGetSenderUniqueID))dlsym(iokit, "IOHIDEventGetSenderUniqueID");
+                pGetEventType = (__typeof__(pGetEventType))dlsym(iokit, "IOHIDEventGetType");
+                pGetTypeID = (__typeof__(pGetTypeID))dlsym(iokit, "IOHIDEventGetTypeID");
             }
         } @catch (__unused NSException *e) {}
 
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
         SnifLog(@"==================================================");
-        SnifLog([NSString stringWithFormat:@"HIDEventSniffer v1.0.5 已注入 Preferences（bundle=%@）", bundleID]);
-        SnifLog([NSString stringWithFormat:@"SenderID解析=%d UniqueID解析=%d", pGetSenderID != NULL, pGetSenderUniqueID != NULL]);
+        SnifLog([NSString stringWithFormat:@"HIDEventSniffer v1.0.6 已注入 Preferences（bundle=%@）", bundleID]);
+        SnifLog([NSString stringWithFormat:@"IOKit符号: SenderID=%d UniqueID=%d Type=%d TypeID=%d",
+                 pGetSenderID != NULL, pGetSenderUniqueID != NULL, pGetEventType != NULL, pGetTypeID != NULL]);
+        SnifLog([NSString stringWithFormat:@"UIEvent含hid/event的ivar: %@", DumpHIDIvars([UIEvent class])]);
+        SnifLog([NSString stringWithFormat:@"UITouch含hid/event的ivar: %@", DumpHIDIvars([UITouch class])]);
         SnifLog([NSString stringWithFormat:@"已连接蓝牙设备: %@", SnifConnectedBTDevices()]);
         SnifLog(@"请打开本设置页，用翻页器按键：音量+/-、四方向、点击，各按2~3下");
         SnifLog([NSString stringWithFormat:@"日志路径: %@", SnifLogPath()]);
