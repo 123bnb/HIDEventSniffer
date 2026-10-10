@@ -1,6 +1,6 @@
 Package: com.yourname.hideventsniffer
 Name: HIDEventSniffer
-Version: 1.0.7
+Version: 1.0.8
 Architecture: iphoneos-arm64e
 Description: 蓝牙翻页器按键抓取v1.0.6：设备溯源多路探测（KVC/ivar偏移/UITouch）+ivAR诊断日志
 Maintainer: 123bnb
