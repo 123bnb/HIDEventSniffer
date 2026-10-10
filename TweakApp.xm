@@ -56,16 +56,19 @@ static NSTimeInterval gLastTouchLog = 0;
         if (event) {
             NSMutableString *d = [NSMutableString string];
             if (event.type == UIEventTypePresses) {
-                // 蓝牙键盘按键（方向键/回车等）
-                for (UIPress *p in event.presses) {
-                    UIKey *k = p.key;
-                    if (!k) continue;
-                    long long kc = (long long)k.keyCode;
-                    NSString *name = KeyName(kc);
-                    if (name) {
-                        [d appendFormat:@"PRESS key=0x%llx(%@) phase=%ld ", kc, name, (long)p.phase];
-                    } else {
-                        [d appendFormat:@"PRESS key=0x%llx phase=%ld ", kc, (long)p.phase];
+                // 蓝牙键盘按键（方向键/回车等）。UIEvent.presses 是私有属性，用 KVC 安全取值
+                NSSet *presses = [event valueForKey:@"presses"];
+                if ([presses isKindOfClass:[NSSet class]]) {
+                    for (UIPress *p in presses) {
+                        UIKey *k = p.key;
+                        if (!k) continue;
+                        long long kc = (long long)k.keyCode;
+                        NSString *name = KeyName(kc);
+                        if (name) {
+                            [d appendFormat:@"PRESS key=0x%llx(%@) phase=%ld ", kc, name, (long)p.phase];
+                        } else {
+                            [d appendFormat:@"PRESS key=0x%llx phase=%ld ", kc, (long)p.phase];
+                        }
                     }
                 }
             } else if (event.type == UIEventTypeTouches) {
