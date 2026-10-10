@@ -45,12 +45,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RAW=$(ls packages/*.deb | head -1)
-          DEB=HIDEventSniffer-1.0.6-roothide.deb
+          DEB=HIDEventSniffer-1.0.7-roothide.deb
           cp "$RAW" "$DEB"
-          TAG=v1.0.6
-          NOTES=$'HID 事件抓取诊断 v1.0.6（roothide 直装）\n\n【本次更新】设备溯源多路探测（修 v1.0.5 全部显示 设备=未知）：\n- 取底层 HID 事件从单一路径改为 3 路探测：KVC(_hidEvent/hidEvent) → ivar 偏移直读 → 从 UITouch 取\n- 用 IOHIDEventGetTypeID 验证取到的事件合法性，防止误读\n- 日志始终显示 senderID 原始值 + HID 事件类型（屏幕和蓝牙 ID 必不同，即使 uniqueID 拿不到也能区分）\n- 启动时打印 UIEvent/UITouch 所有含 hid/event 的 ivar 名和类型（诊断依据）\n- 保留触摸类型判定（按下/移动/弹起/取消 + 单击/连点/长按/拖动）\n\n【架构】只注入 Preferences：设置 → HIDEventSniffer → 日志页（自动刷新）\n\n【怎么测】安装 → 注销 → 进设置 → HIDEventSniffer → 分别用手指和翻页器按键，\n日志会显示每行事件开头：设备=屏幕/蓝牙HID/外部HID id=0x.. hidType=..。只记录、不改变任何操作。'
+          TAG=v1.0.7
+          NOTES=$'HID 事件抓取诊断 v1.0.7（roothide 直装）\n\n【本次更新】\n1. 设备特征钉死：事件日志追加 vendorID/productID（vid=0x.. pid=0x..）——设备固件写死的，重启/重连不变，是认住翻页器的稳定身份证\n2. 诊断行固定头部：所有以 [诊断] 开头的行固定在日志顶部不被事件刷掉，事件日志最新在上\n3. 取消自动刷新：改为手动点「刷新日志」，不再 0.6s 轮询\n4. 新增 IOBluetooth 私有框架探测已配对设备，与 BluetoothManager 对比，看哪个能见到翻页器\n\n【架构】只注入 Preferences：设置 → HIDEventSniffer → 日志页（手动刷新）\n\n【怎么测】安装 → 注销 → 进设置 → HIDEventSniffer → 顶部看诊断行（IOBluetooth/BluetoothManager 设备列表），\n然后分别用手指和翻页器按键，点「刷新日志」看每行：设备=屏幕/外部HID id=0x.. vid=0x.. pid=0x..。只记录、不改变任何操作。'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$DEB" --clobber
           else
-            gh release create "$TAG" "$DEB" --title "HIDEventSniffer v1.0.2" --notes "$NOTES"
+            gh release create "$TAG" "$DEB" --title "HIDEventSniffer v1.0.7" --notes "$NOTES"
           fi
