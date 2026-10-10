@@ -334,11 +334,11 @@ static NSTimeInterval gLastMoveLog = 0; // 移动限流 100ms
 %end
 
 // 重新写入诊断信息（ctor 和「重启插件」按钮共用）
-// 清空日志后点设置页的「重启插件」，会清空日志并重新写入这份诊断
-static void SnifWriteDiagnostics(void) {
+// 非 static：设置页 bundle 与 Tweak 同进程，直接 extern 调用
+void SnifWriteDiagnostics(void) {
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
     SnifLog(@"[诊断] ==================================================");
-    SnifLog([NSString stringWithFormat:@"[诊断] HIDEventSniffer v1.0.8 已注入 Preferences（bundle=%@）", bundleID]);
+    SnifLog([NSString stringWithFormat:@"[诊断] HIDEventSniffer v1.0.9 已注入 Preferences（bundle=%@）", bundleID]);
     SnifLog([NSString stringWithFormat:@"[诊断] IOKit符号: SenderID=%d UniqueID=%d Type=%d TypeID=%d GetInteger=%d",
              pGetSenderID != NULL, pGetSenderUniqueID != NULL, pGetEventType != NULL, pGetTypeID != NULL, pGetIntegerValue != NULL]);
     SnifLog([NSString stringWithFormat:@"[诊断] UIEvent含hid/event的ivar: %@", DumpHIDIvars([UIEvent class])]);
@@ -349,20 +349,6 @@ static void SnifWriteDiagnostics(void) {
     SnifLog([NSString stringWithFormat:@"[诊断] 日志路径: %@", SnifLogPath()]);
     SnifLog(@"[诊断] ==================================================");
 }
-
-// darwin 通知回调：「重启插件」按钮触发 → 清空日志 + 重写诊断
-static void SnifOnReload(CFNotificationCenterRef center, void *observer,
-                         CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    @autoreleasepool {
-        @try {
-            NSString *path = SnifLogPath();
-            [@"" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
-        } @catch (__unused NSException *e) {}
-        SnifWriteDiagnostics();
-    }
-}
-
-extern CFNotificationCenterRef CFNotificationCenterGetDarwinCenter(void);
 
 %ctor {
     @autoreleasepool {
@@ -377,16 +363,6 @@ extern CFNotificationCenterRef CFNotificationCenterGetDarwinCenter(void);
                 pGetIntegerValue = (__typeof__(pGetIntegerValue))dlsym(iokit, "IOHIDEventGetIntegerValue");
             }
         } @catch (__unused NSException *e) {}
-
-        // 注册「重启插件」darwin 通知（设置页按钮触发）
-        @try {
-            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinCenter(), NULL, SnifOnReload,
-                                            CFSTR("com.yourname.hideventsniffer/reload"), NULL,
-                                            CFNotificationSuspensionBehaviorDeliverImmediately);
-            SnifLog(@"[诊断] 已注册「重启插件」通知监听");
-        } @catch (__unused NSException *e) {
-            SnifLog(@"[诊断] 注册「重启插件」通知监听失败");
-        }
 
         SnifWriteDiagnostics();
     }
