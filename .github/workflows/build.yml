@@ -45,10 +45,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RAW=$(ls packages/*.deb | head -1)
-          DEB=HIDEventSniffer-1.0.4-roothide.deb
+          DEB=HIDEventSniffer-1.0.5-roothide.deb
           cp "$RAW" "$DEB"
-          TAG=v1.0.4
-          NOTES=$'HID 事件抓取诊断 v1.0.4（roothide 直装）\n\n【本次更新】触摸类型全分辨：\n- TOUCH 相位中文化：按下/移动/静止/弹起/取消\n- 记录拖动路径（移动轨迹，限流 100ms）\n- 弹起时自动判定：单击 / 连点N次 / 长按 / 拖动滑动（按位移与时长）\n- PRESS 键盘键相位也中文化（按下/弹起）\n\n【架构】只注入 Preferences：设置 → HIDEventSniffer → 日志页（自动刷新）\n打开设置页，用翻页器按键（音量+/-、四方向、点击），日志实时显示。\n\n【怎么测】安装 → 注销 → 进设置 → HIDEventSniffer → 分别用：手指单击、拖动、长按、\n以及翻页器每个按钮按键 → 看日志怎么分辨。只记录、不改变任何操作。'
+          TAG=v1.0.5
+          NOTES=$'HID 事件抓取诊断 v1.0.5（roothide 直装）\n\n【本次更新】设备溯源：\n- 每个事件标记来源设备：屏幕(手指) / 蓝牙HID(含设备id=0x.. 和 uniqueID) / 其它外部HID\n- 设置页顶部显示当前已连接蓝牙设备（名称+地址），对照日志里的 id/uid 即可确认翻页器\n- 保留 v1.0.4 的触摸类型判定（按下/移动/弹起/取消 + 单击/连点/长按/拖动）\n\n【架构】只注入 Preferences：设置 → HIDEventSniffer → 日志页（自动刷新）\n\n【怎么测】安装 → 注销 → 进设置 → HIDEventSniffer → 看顶部蓝牙设备列表，\n然后分别用手指和翻页器按键，日志会标明每个事件的来源设备。只记录、不改变任何操作。'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$DEB" --clobber
           else

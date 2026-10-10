@@ -18,9 +18,29 @@ static NSString *SnifLogPath(void) {
     return [docs stringByAppendingPathComponent:@"HIDEventSniffer.log"];
 }
 
+// 当前已连接的蓝牙设备（名称+地址），用于对照识别翻页器
+static NSString *ConnectedBTDevices(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    @try {
+        id bt = [NSClassFromString(@"BluetoothManager") performSelector:NSSelectorFromString(@"sharedInstance")];
+        if (bt) {
+            NSArray *devs = [bt performSelector:NSSelectorFromString(@"connectedDevices")];
+            for (id d in devs) {
+                NSString *name = [d performSelector:NSSelectorFromString(@"name")];
+                NSString *addr = [d performSelector:NSSelectorFromString(@"address")];
+                if (name.length) {
+                    [out addObject:[NSString stringWithFormat:@"%@(%@)", name, addr.length ? addr : @"?"]];
+                }
+            }
+        }
+    } @catch (__unused NSException *e) {}
+    return out.count ? [out componentsJoinedByString:@"  "] : @"（未检测到已连接蓝牙设备）";
+}
+
 @interface RootListController : PSViewController
 @property (nonatomic, strong) UITextView *tv;
 @property (nonatomic, strong) UILabel *hint;
+@property (nonatomic, strong) UILabel *btLabel;
 @property (nonatomic, strong) NSTimer *timer;
 @property (nonatomic, strong) NSString *lastText;
 @end
@@ -42,14 +62,22 @@ static NSString *SnifLogPath(void) {
     if (self.view.safeAreaInsets.top > 20) top = self.view.safeAreaInsets.top + 60;
 
     // 说明文字
-    self.hint = [[UILabel alloc] initWithFrame:CGRectMake(16, top, self.view.bounds.size.width - 32, 52)];
+    self.hint = [[UILabel alloc] initWithFrame:CGRectMake(16, top, self.view.bounds.size.width - 32, 40)];
     self.hint.text = @"打开本页后，用蓝牙翻页器按键（音量+/-、四方向、点击），下方实时显示捕获的键码。";
     self.hint.numberOfLines = 0;
     self.hint.font = [UIFont systemFontOfSize:13];
     self.hint.textColor = [UIColor secondaryLabelColor];
     [self.view addSubview:self.hint];
 
-    CGFloat btnY = top + 56;
+    // 蓝牙设备对照
+    self.btLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, top + 42, self.view.bounds.size.width - 32, 30)];
+    self.btLabel.text = [NSString stringWithFormat:@"已连接蓝牙: %@", ConnectedBTDevices()];
+    self.btLabel.numberOfLines = 2;
+    self.btLabel.font = [UIFont systemFontOfSize:12];
+    self.btLabel.textColor = [UIColor systemBlueColor];
+    [self.view addSubview:self.btLabel];
+
+    CGFloat btnY = top + 78;
     // 刷新按钮
     UIButton *refresh = [UIButton buttonWithType:UIButtonTypeSystem];
     refresh.frame = CGRectMake(16, btnY, (self.view.bounds.size.width - 48) / 2, 40);

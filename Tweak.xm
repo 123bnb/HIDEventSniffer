@@ -1,10 +1,15 @@
-// HIDEventSniffer v1.0.3 —— 蓝牙翻页器按键抓取（注入 Preferences 进程）
+// HIDEventSniffer v1.0.5 —— 蓝牙翻页器按键抓取（注入 Preferences 进程）
 //
 // 用户方案（比之前所有版本都干净）：
 //   系统设置 → HIDEventSniffer → 极简设置页（只显示日志+刷新）
 //   打开设置页（Preferences 前台），用蓝牙翻页器在设置页里按键，
 //   按键事件由 backboardd 路由给前台 App（Preferences）→ 本插件在进程内捕获 →
 //   写入日志 → 设置页定时刷新实时显示。
+//
+// v1.0.5 新增：设备溯源
+//   - 从事件底层 HID 数据读 设备ID(senderID) + 设备唯一标识(uniqueID)
+//   - 区分：屏幕(手指) / 蓝牙HID / 其它外部HID
+//   - 设置页顶部列出当前已连接的蓝牙设备（名称+地址），对照识别翻页器
 //
 // 只注入 Preferences 一个进程，完全不碰 SpringBoard，安全模式风险归零。
 // 只观察、只记录，绝不修改/吞掉事件。
@@ -15,6 +20,12 @@
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <dlfcn.h>
+
+// IOKit 私有 HID 接口
+typedef struct __IOHIDEvent *HIDEventRef;
+static uint64_t (*pGetSenderID)(HIDEventRef);
+static CFStringRef (*pGetSenderUniqueID)(HIDEventRef);
 
 static NSString *SnifLogPath(void) {
     NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
@@ -40,6 +51,50 @@ static void SnifLog(NSString *s) {
             if (h2) { [h2 seekToEndOfFile]; [h2 writeData:[line dataUsingEncoding:NSUTF8StringEncoding]]; [h2 closeFile]; }
         } @catch (__unused NSException *e) {}
     } @catch (__unused NSException *e) {}
+}
+
+// 从 UIEvent 取底层 IOHIDEventRef（私有 ivar，KVC 安全取值）
+static HIDEventRef SnifHIDEvent(UIEvent *event) {
+    if (!event) return NULL;
+    @try {
+        id v = [event valueForKey:@"_hidEvent"];
+        if (v) return (__bridge HIDEventRef)v;
+    } @catch (__unused NSException *e) {}
+    return NULL;
+}
+
+// 设备溯源：senderID + uniqueID 区分 屏幕/蓝牙/外部
+static NSString *SnifDeviceDesc(UIEvent *event) {
+    HIDEventRef hid = SnifHIDEvent(event);
+    if (!hid || !pGetSenderID) return @"设备=未知";
+    uint64_t sid = pGetSenderID(hid);
+    NSString *uid = nil;
+    if (pGetSenderUniqueID) {
+        CFStringRef u = pGetSenderUniqueID(hid);
+        if (u) uid = (__bridge NSString *)u;
+    }
+    if (sid == 0 && uid.length == 0) return @"设备=屏幕(手指)";
+    if (uid.length) return [NSString stringWithFormat:@"设备=蓝牙HID id=0x%llx uid=%@", sid, uid];
+    return [NSString stringWithFormat:@"设备=外部HID id=0x%llx", sid];
+}
+
+// 当前已连接的蓝牙设备（名称+地址），用于对照识别翻页器
+static NSString *SnifConnectedBTDevices(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    @try {
+        id bt = [NSClassFromString(@"BluetoothManager") performSelector:NSSelectorFromString(@"sharedInstance")];
+        if (bt) {
+            NSArray *devs = [bt performSelector:NSSelectorFromString(@"connectedDevices")];
+            for (id d in devs) {
+                NSString *name = [d performSelector:NSSelectorFromString(@"name")];
+                NSString *addr = [d performSelector:NSSelectorFromString(@"address")];
+                if (name.length) {
+                    [out addObject:[NSString stringWithFormat:@"%@(%@)", name, addr.length ? addr : @"?"]];
+                }
+            }
+        }
+    } @catch (__unused NSException *e) {}
+    return out.count ? [out componentsJoinedByString:@" "] : @"（未检测到已连接蓝牙设备）";
 }
 
 // 按键名映射（HID usage，UIKeyboardHIDUsage）
@@ -96,6 +151,7 @@ static NSTimeInterval gLastMoveLog = 0; // 移动限流 100ms
     @try {
         if (event) {
             NSMutableString *d = [NSMutableString string];
+            NSString *dev = SnifDeviceDesc(event); // 设备溯源：屏幕/蓝牙HID id/uid
             if (event.type == UIEventTypePresses) {
                 // 蓝牙键盘按键（方向键/回车等）。UIEvent.presses 是私有属性，用 KVC 安全取值
                 NSSet *presses = [event valueForKey:@"presses"];
@@ -111,7 +167,7 @@ static NSTimeInterval gLastMoveLog = 0; // 移动限流 100ms
             } else if (event.type == UIEventTypeTouches) {
                 // 触摸 / 鼠标点击：分辨 按下/移动/弹起/取消 + 判定 单击/连点/长按/拖动
                 NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-                __block NSInteger idx = 0;
+                NSInteger idx = 0;
                 for (UITouch *t in event.allTouches) {
                     CGPoint pt = [t locationInView:nil];
                     if (t.phase == UITouchPhaseBegan) {
@@ -150,7 +206,7 @@ static NSTimeInterval gLastMoveLog = 0; // 移动限流 100ms
                 [d appendString:@"SCROLL 滚轮/滚动事件 "];
             }
             if (d.length) {
-                SnifLog([NSString stringWithFormat:@"type=%ld %@", (long)event.type, d]);
+                SnifLog([NSString stringWithFormat:@"%@ type=%ld %@", dev, (long)event.type, d]);
             }
         }
     } @catch (__unused NSException *e) {}
@@ -161,9 +217,20 @@ static NSTimeInterval gLastMoveLog = 0; // 移动限流 100ms
 
 %ctor {
     @autoreleasepool {
+        // 解析 IOKit 设备溯源函数
+        @try {
+            void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW);
+            if (iokit) {
+                pGetSenderID = (__typeof__(pGetSenderID))dlsym(iokit, "IOHIDEventGetSenderID");
+                pGetSenderUniqueID = (__typeof__(pGetSenderUniqueID))dlsym(iokit, "IOHIDEventGetSenderUniqueID");
+            }
+        } @catch (__unused NSException *e) {}
+
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
         SnifLog(@"==================================================");
-        SnifLog([NSString stringWithFormat:@"HIDEventSniffer v1.0.4 已注入 Preferences（bundle=%@）", bundleID]);
+        SnifLog([NSString stringWithFormat:@"HIDEventSniffer v1.0.5 已注入 Preferences（bundle=%@）", bundleID]);
+        SnifLog([NSString stringWithFormat:@"SenderID解析=%d UniqueID解析=%d", pGetSenderID != NULL, pGetSenderUniqueID != NULL]);
+        SnifLog([NSString stringWithFormat:@"已连接蓝牙设备: %@", SnifConnectedBTDevices()]);
         SnifLog(@"请打开本设置页，用翻页器按键：音量+/-、四方向、点击，各按2~3下");
         SnifLog([NSString stringWithFormat:@"日志路径: %@", SnifLogPath()]);
         SnifLog(@"==================================================");

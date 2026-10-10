@@ -1,8 +1,8 @@
 Package: com.yourname.hideventsniffer
 Name: HIDEventSniffer
-Version: 1.0.4
+Version: 1.0.5
 Architecture: iphoneos-arm64e
-Description: 蓝牙翻页器按键抓取v1.0.4：分辨触摸按下/移动/弹起/取消并自动判定单击/连点/长按/拖动，设置页实时显示
+Description: 蓝牙翻页器按键抓取v1.0.5：设备溯源（屏幕/蓝牙HID id+uid），设置页顶部显示已连接蓝牙设备对照
 Maintainer: 123bnb
 Author: 123bnb
 Section: Tweaks
