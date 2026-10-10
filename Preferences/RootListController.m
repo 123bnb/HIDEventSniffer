@@ -77,9 +77,11 @@ static NSString *ConnectedBTDevices(void) {
     [self.view addSubview:self.btLabel];
 
     CGFloat btnY = top + 78;
+    // 三个按钮一行：刷新日志 / 清空 / 重启插件
+    CGFloat btnW = (self.view.bounds.size.width - 16 * 2 - 8 * 2) / 3;
     // 刷新按钮（手动）
     UIButton *refresh = [UIButton buttonWithType:UIButtonTypeSystem];
-    refresh.frame = CGRectMake(16, btnY, (self.view.bounds.size.width - 48) / 2, 40);
+    refresh.frame = CGRectMake(16, btnY, btnW, 40);
     [refresh setTitle:@"刷新日志" forState:UIControlStateNormal];
     refresh.backgroundColor = [UIColor tertiarySystemFillColor];
     refresh.layer.cornerRadius = 8;
@@ -88,12 +90,21 @@ static NSString *ConnectedBTDevices(void) {
 
     // 清空按钮
     UIButton *clear = [UIButton buttonWithType:UIButtonTypeSystem];
-    clear.frame = CGRectMake(24 + (self.view.bounds.size.width - 48) / 2, btnY, (self.view.bounds.size.width - 48) / 2, 40);
+    clear.frame = CGRectMake(16 + btnW + 8, btnY, btnW, 40);
     [clear setTitle:@"清空" forState:UIControlStateNormal];
     clear.backgroundColor = [UIColor tertiarySystemFillColor];
     clear.layer.cornerRadius = 8;
     [clear addTarget:self action:@selector(clearLog) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:clear];
+
+    // 重启插件按钮：清空日志并重写诊断信息（等同插件重新初始化）
+    UIButton *restart = [UIButton buttonWithType:UIButtonTypeSystem];
+    restart.frame = CGRectMake(16 + (btnW + 8) * 2, btnY, btnW, 40);
+    [restart setTitle:@"重启插件" forState:UIControlStateNormal];
+    restart.backgroundColor = [UIColor tertiarySystemFillColor];
+    restart.layer.cornerRadius = 8;
+    [restart addTarget:self action:@selector(restartPlugin) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:restart];
 
     // 日志区
     CGFloat logY = btnY + 52;
@@ -149,6 +160,22 @@ static NSString *ConnectedBTDevices(void) {
         [@"" writeToFile:SnifLogPath() atomically:YES encoding:NSUTF8StringEncoding error:nil];
         self.lastText = @"";
         self.tv.text = @"（已清空）";
+    } @catch (__unused NSException *e) {}
+}
+
+// 重启插件：发 darwin 通知让 Tweak 清空日志并重写诊断信息（等同插件重新初始化）
+- (void)restartPlugin {
+    @try {
+        extern CFNotificationCenterRef CFNotificationCenterGetDarwinCenter(void);
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinCenter(),
+                                              CFSTR("com.yourname.hideventsniffer/reload"),
+                                              NULL, NULL, YES);
+        self.lastText = @"";
+        self.tv.text = @"（已发送重启指令，等待诊断重写…）";
+        // 0.8s 后自动拉一次，显示新诊断
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self refreshLog];
+        });
     } @catch (__unused NSException *e) {}
 }
 
