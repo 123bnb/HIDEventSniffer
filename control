@@ -1,8 +1,8 @@
 Package: com.yourname.hideventsniffer
 Name: HIDEventSniffer
-Version: 1.0.3
+Version: 1.0.4
 Architecture: iphoneos-arm64e
-Description: 蓝牙翻页器按键抓取v1.0.3：设置页实时显示日志，打开设置页用翻页器按键即可捕获（音量+/-、四方向、点击）
+Description: 蓝牙翻页器按键抓取v1.0.4：分辨触摸按下/移动/弹起/取消并自动判定单击/连点/长按/拖动，设置页实时显示
 Maintainer: 123bnb
 Author: 123bnb
 Section: Tweaks

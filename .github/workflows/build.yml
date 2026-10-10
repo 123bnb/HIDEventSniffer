@@ -45,10 +45,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RAW=$(ls packages/*.deb | head -1)
-          DEB=HIDEventSniffer-1.0.3-roothide.deb
+          DEB=HIDEventSniffer-1.0.4-roothide.deb
           cp "$RAW" "$DEB"
-          TAG=v1.0.3
-          NOTES=$'HID 事件抓取诊断 v1.0.3（roothide 直装，用户方案版）\n\n【架构】只注入 Preferences 一个进程（系统设置 App）：\n- 系统设置 → HIDEventSniffer → 极简设置页（自动刷新日志 + 刷新按钮 + 清空）\n- 打开设置页，用蓝牙翻页器直接按键（音量+/-、四方向、点击），日志实时显示在设置页里\n- 不再碰 SpringBoard，安全模式风险归零\n\n【日志】Preferences 沙盒 Documents/HIDEventSniffer.log（设置页直接读），\n权限允许时同时写 /var/mobile/Documents/HIDEventSniffer.log。\n\n【怎么测】安装 → 注销 → 进设置 → HIDEventSniffer → 用翻页器按键 → 看日志实时刷新。\n只记录、不改变任何操作，可随时卸载。'
+          TAG=v1.0.4
+          NOTES=$'HID 事件抓取诊断 v1.0.4（roothide 直装）\n\n【本次更新】触摸类型全分辨：\n- TOUCH 相位中文化：按下/移动/静止/弹起/取消\n- 记录拖动路径（移动轨迹，限流 100ms）\n- 弹起时自动判定：单击 / 连点N次 / 长按 / 拖动滑动（按位移与时长）\n- PRESS 键盘键相位也中文化（按下/弹起）\n\n【架构】只注入 Preferences：设置 → HIDEventSniffer → 日志页（自动刷新）\n打开设置页，用翻页器按键（音量+/-、四方向、点击），日志实时显示。\n\n【怎么测】安装 → 注销 → 进设置 → HIDEventSniffer → 分别用：手指单击、拖动、长按、\n以及翻页器每个按钮按键 → 看日志怎么分辨。只记录、不改变任何操作。'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$DEB" --clobber
           else

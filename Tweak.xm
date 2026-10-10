@@ -62,8 +62,33 @@ static NSString *KeyName(long long kc) {
     }
 }
 
-// 触摸限流（点击记录 began/ended，150ms 内同相位只记一条）
-static NSTimeInterval gLastTouchLog = 0;
+// 相位中文化
+static NSString *TouchPhaseName(NSInteger ph) {
+    switch (ph) {
+        case UITouchPhaseBegan:     return @"按下";
+        case UITouchPhaseMoved:     return @"移动";
+        case UITouchPhaseStationary:return @"静止";
+        case UITouchPhaseEnded:     return @"弹起";
+        case UITouchPhaseCancelled: return @"取消";
+        default: return [NSString stringWithFormat:@"相位%ld", (long)ph];
+    }
+}
+static NSString *PressPhaseName(NSInteger ph) {
+    switch (ph) {
+        case 0: return @"按下";
+        case 1: return @"变化";
+        case 2: return @"静止";
+        case 3: return @"弹起";
+        case 4: return @"取消";
+        default: return [NSString stringWithFormat:@"相位%ld", (long)ph];
+    }
+}
+
+// 触摸生命周期跟踪（单指/翻页器场景；多指时以第一个触摸为准做判定）
+static NSTimeInterval gTouchBeganTime = 0;
+static CGPoint gTouchBeganPoint = {0, 0};
+static BOOL gTouchMoved = NO;
+static NSTimeInterval gLastMoveLog = 0; // 移动限流 100ms
 
 %hook UIApplication
 
@@ -79,28 +104,50 @@ static NSTimeInterval gLastTouchLog = 0;
                         UIKey *k = p.key;
                         if (!k) continue;
                         long long kc = (long long)k.keyCode;
-                        NSString *name = KeyName(kc);
-                        if (name) {
-                            [d appendFormat:@"PRESS key=0x%llx(%@) phase=%ld ", kc, name, (long)p.phase];
-                        } else {
-                            [d appendFormat:@"PRESS key=0x%llx phase=%ld ", kc, (long)p.phase];
-                        }
+                        NSString *name = KeyName(kc) ?: @"未知键";
+                        [d appendFormat:@"PRESS key=0x%llx(%@) %@ ", kc, name, PressPhaseName(p.phase)];
                     }
                 }
             } else if (event.type == UIEventTypeTouches) {
-                // 触摸 / 鼠标点击
+                // 触摸 / 鼠标点击：分辨 按下/移动/弹起/取消 + 判定 单击/连点/长按/拖动
                 NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-                if (now - gLastTouchLog > 0.15) {
-                    for (UITouch *t in event.allTouches) {
-                        if (t.phase == UITouchPhaseBegan || t.phase == UITouchPhaseEnded) {
-                            CGPoint pt = [t locationInView:nil];
-                            [d appendFormat:@"TOUCH phase=%ld x=%.0f y=%.0f ", (long)t.phase, pt.x, pt.y];
+                __block NSInteger idx = 0;
+                for (UITouch *t in event.allTouches) {
+                    CGPoint pt = [t locationInView:nil];
+                    if (t.phase == UITouchPhaseBegan) {
+                        gTouchBeganTime = now;
+                        gTouchBeganPoint = pt;
+                        gTouchMoved = NO;
+                        [d appendFormat:@"TOUCH#%ld 按下 x=%.0f y=%.0f tap=%ld ", (long)idx, pt.x, pt.y, (long)t.tapCount];
+                    } else if (t.phase == UITouchPhaseMoved) {
+                        if (now - gLastMoveLog > 0.1) {
+                            CGFloat dx = pt.x - gTouchBeganPoint.x, dy = pt.y - gTouchBeganPoint.y;
+                            if (dx * dx + dy * dy > 4) gTouchMoved = YES;
+                            [d appendFormat:@"TOUCH#%ld 移动 x=%.0f y=%.0f (自起点 dx=%.0f dy=%.0f) ", (long)idx, pt.x, pt.y, dx, dy];
+                            gLastMoveLog = now;
                         }
+                    } else if (t.phase == UITouchPhaseEnded) {
+                        CGFloat dx = pt.x - gTouchBeganPoint.x, dy = pt.y - gTouchBeganPoint.y;
+                        CGFloat dist = sqrt(dx * dx + dy * dy);
+                        CGFloat dur = now - gTouchBeganTime;
+                        NSString *verdict;
+                        if (t.tapCount >= 2) {
+                            verdict = [NSString stringWithFormat:@"连点%ld次", (long)t.tapCount];
+                        } else if (dist >= 12) {
+                            verdict = [NSString stringWithFormat:@"拖动/滑动(位移%.0fpt 时长%.2fs)", dist, dur];
+                        } else if (dur >= 0.6) {
+                            verdict = [NSString stringWithFormat:@"长按(%.2fs)", dur];
+                        } else {
+                            verdict = [NSString stringWithFormat:@"单击(位移%.0fpt 时长%.2fs)", dist, dur];
+                        }
+                        [d appendFormat:@"TOUCH#%ld 弹起 x=%.0f y=%.0f → %@ ", (long)idx, pt.x, pt.y, verdict];
+                    } else if (t.phase == UITouchPhaseCancelled) {
+                        [d appendFormat:@"TOUCH#%ld 取消 x=%.0f y=%.0f ", (long)idx, pt.x, pt.y];
                     }
-                    if (d.length) gLastTouchLog = now;
+                    idx++;
                 }
             } else if (event.type == UIEventTypeScroll) {
-                [d appendString:@"SCROLL "];
+                [d appendString:@"SCROLL 滚轮/滚动事件 "];
             }
             if (d.length) {
                 SnifLog([NSString stringWithFormat:@"type=%ld %@", (long)event.type, d]);
@@ -116,7 +163,7 @@ static NSTimeInterval gLastTouchLog = 0;
     @autoreleasepool {
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
         SnifLog(@"==================================================");
-        SnifLog([NSString stringWithFormat:@"HIDEventSniffer v1.0.3 已注入 Preferences（bundle=%@）", bundleID]);
+        SnifLog([NSString stringWithFormat:@"HIDEventSniffer v1.0.4 已注入 Preferences（bundle=%@）", bundleID]);
         SnifLog(@"请打开本设置页，用翻页器按键：音量+/-、四方向、点击，各按2~3下");
         SnifLog([NSString stringWithFormat:@"日志路径: %@", SnifLogPath()]);
         SnifLog(@"==================================================");
